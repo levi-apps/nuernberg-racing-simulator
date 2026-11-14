@@ -2,7 +2,7 @@
 
 Mit dem Auto durch das echte Nürnberg fahren, mit dem echten Straßennetz und echten Gebäuden, Kreuzungen und Ampeln aus OpenStreetMap. Erst in 2D aus der Vogelperspektive, später in 3D.
 
-Stand: **Schritt 2 – mit dem Auto durch die ganze Stadt fahren.** (Schritt 1: Datenpipeline und Karten-Debugansicht)
+Stand: **Schritt 3 – Ampeln und KI-Verkehr.** (Schritt 1: Datenpipeline und Debugansicht, Schritt 2: Fahren)
 
 ## Schnellstart
 
@@ -27,6 +27,8 @@ npm run dev             # Spiel unter http://localhost:5173
 | Leertaste | Handbremse (driften) |
 | R | zurück auf die nächste Straße |
 | C | Kamera: Norden oben ↔ dreht mit dem Auto |
+| T | KI-Verkehr an/aus |
+| + / − | Verkehrsdichte (25–250 %) |
 | K | Karte / Debugansicht ein- und ausblenden |
 | H | Tastenhilfe ein/aus |
 | Mausrad | näher / weiter weg |
@@ -39,6 +41,20 @@ Gamepads werden mit der Standardbelegung unterstützt: RT Gas, LT Bremse, linker
 - Auf Brücken und in Tunneln fährt das Auto auf einer eigenen Ebene und prallt nicht gegen darunter- oder darüberliegende Gebäude.
 - Unten im HUD stehen Straßenname und Tempolimit. Bei mehr als 5 km/h über dem Limit blinkt das Schild (noch ohne Folgen).
 - Kacheln werden beim Fahren um das Auto herum nachgeladen. Solange die Umgebung fehlt, steht die Physik kurz still.
+
+## KI-Verkehr
+
+Im Umkreis von etwa 450 m um dich fahren je nach Straßenart 50 bis 180 Autos, Transporter und Busse. Sie werden außer Sicht erzeugt und verschwinden in über 520 m Entfernung wieder.
+
+- **Route:** An jeder Kreuzung wird zufällig gewählt, meist geradeaus, seltener abbiegen. Die Spur bestimmt, welche Richtungen möglich sind. Spuren außerhalb des Hauptnetzes und Zufahrten werden gemieden.
+- **Fahren:** Abstand und Geschwindigkeit regelt das Intelligent Driver Model (IDM). Die KI hält das Tempolimit mit etwas Streuung ein und wird vor Kurven und Abbiegungen langsamer.
+- **Ampeln:** Bei Rot hält die KI an der Haltelinie. Bei Gelb hält sie, wenn sie noch bequem bremsen kann.
+- **Vorfahrt:** Die KI berücksichtigt Vorfahrtstraße, Vorfahrt gewähren, Stopp (erst anhalten), rechts vor links und Kreisverkehr. Linksabbieger warten bei Grün auf den Gegenverkehr. Ob sich zwei Fahrwege kreuzen, ergibt sich aus den Konfliktpunkten der Spurverbinder.
+- **Kreuzungen:** Ist hinter der Kreuzung kein Platz, fährt die KI nicht hinein. Wer länger als 8 s wartet, fährt trotzdem; das löst gegenseitiges Blockieren auf.
+- **Du als Spieler:** Stehst du auf ihrem Weg, bremst die KI für dich. Bei einem Zusammenstoß bleibt das getroffene Fahrzeug kurz liegen.
+- **Rotlichtverstöße:** Wenn du über Rot fährst, wird das erkannt, gezählt und protokolliert (`traffic.events`). Strafen kommen später mit der Polizei.
+
+In der Debugansicht zeigt ein Klick auf ein Fahrzeug Tempo, Zustand (z. B. „wartet an roter Ampel“, „lässt Vorfahrt“) und die geplante Route.
 
 ## Debugansicht (Taste K)
 
@@ -63,6 +79,7 @@ pipeline/   OSM -> Spielwelt
 game/       Browser-Client (Vite, Three.js)
   src/world/          Darstellung der Welt, Kachel-Nachladen (für Fahren und Debug)
   src/drive/          Auto (Physik, Kollision, Eingabe), Kamera, HUD
+  src/traffic/        KI-Verkehr (Graph mit Konfliktpunkten, Simulation, Darstellung)
   src/debug/          Debug-Oberfläche
 data/raw/   OSM-Rohdaten (nicht im Repo)
 ```
@@ -98,6 +115,8 @@ Objekte, die über Kachelgrenzen reichen, stehen in mehreren Kacheln mit derselb
 - Die Fahrbahnbreite ergibt sich nur aus den Fahrspuren. Parkstreifen, Gehwege und Bordsteine fehlen noch.
 - Wer abseits der Straße unter eine Brücke fährt und dabei die Brückenfläche berührt, landet auf der Brücke.
 - Mauern, Zäune, Poller und Bäume sind noch keine Hindernisse, nur Gebäude.
+- Die KI wechselt keine Spuren und überholt nicht. Sehr selten überlappen sich zwei KI-Fahrzeuge kurz in einer Kreuzung.
+- Es gibt noch keine Fußgänger, Radfahrer und Straßenbahnen. Fußgängerampeln schalten trotzdem.
 
 ## Lizenz der Kartendaten
 

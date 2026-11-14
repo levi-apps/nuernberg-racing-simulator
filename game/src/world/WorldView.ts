@@ -42,8 +42,11 @@ export class WorldView {
   mpp = 1.5;
   rot = Math.PI / 2;
   mode: ViewMode = 'map';
-  /** Punkt, um den immer Kacheln geladen werden (Auto) */
+  /** Punkt, um den immer Kacheln geladen werden (Auto), und Radius (m) für Verkehrssimulation */
   anchor: [number, number] | null = null;
+  anchorRadius = 520;
+  /** wird nach dem Laden jeder Kachel aufgerufen */
+  onTileLoaded?: (tile: Tile) => void;
 
   manifest!: Manifest;
   controllers = new Map<number, SignalController>();
@@ -219,7 +222,7 @@ export class WorldView {
       const r = (Math.hypot(this.canvas.clientWidth, this.canvas.clientHeight) / 2) * this.mpp + TILE_SIZE * 0.5;
       this.collect(this.cx, this.cy, r, want);
     }
-    if (this.anchor) this.collect(this.anchor[0], this.anchor[1], TILE_SIZE * 0.75, want);
+    if (this.anchor) this.collect(this.anchor[0], this.anchor[1], this.anchorRadius, want);
     // nächstgelegene zuerst laden
     const order = [...want].sort((a, b) => this.tileDist(a) - this.tileDist(b));
     for (const k of order) {
@@ -228,7 +231,7 @@ export class WorldView {
       if (v) {
         v.group.visible = showTiles;
         this.applyLayers(v);
-      } else if (!this.loading.has(k) && this.loading.size < 8) void this.load(k);
+      } else if (!this.loading.has(k) && this.loading.size < 6) void this.load(k);
     }
     if (this.views.size > MAX_TILES) {
       const old = [...this.views.keys()].filter((k) => !want.has(k)).sort((a, b) => (this.lastUsed.get(a) ?? 0) - (this.lastUsed.get(b) ?? 0));
@@ -270,6 +273,7 @@ export class WorldView {
       for (const c of tile.connectors) this.conById.set(c.id, c);
       v.group.visible = false;
       this.applyLayers(v);
+      this.onTileLoaded?.(tile);
       this.onChange?.();
     } catch (e) {
       console.error('Kachel', k, e);

@@ -8,6 +8,7 @@ import { Input } from './Input.ts';
 import { WorldQuery } from './WorldQuery.ts';
 import { projectOnPolyline, type WorldView } from '../world/WorldView.ts';
 import type { Lane } from '@nrs/shared';
+import type { TrafficSim } from '../traffic/TrafficSim.ts';
 
 const PHYS_DT = 1 / 120;
 
@@ -29,6 +30,12 @@ export class DriveController {
   private outsideWarned = false;
   private lastImpact = 0;
   currentLane: Lane | null = null;
+  traffic?: TrafficSim;
+  /** wird aufgerufen, wenn das Auto weit versetzt wird */
+  onTeleport?: () => void;
+  get spawnedOk(): boolean {
+    return this.spawned;
+  }
 
   constructor(private view: WorldView) {
     this.mesh = new CarMesh(this.car);
@@ -58,6 +65,7 @@ export class DriveController {
 
   putOnLane(lane: Lane, s: number): void {
     const p = pointAtLane(lane, Math.min(Math.max(s, 2), Math.max(2, lane.len - 2)));
+    if (Math.hypot(p.x - this.car.x, p.y - this.car.y) > 250) this.onTeleport?.();
     this.car.place(p.x, p.y, Math.atan2(p.dy, p.dx));
     this.car.layer = lane.layer;
     this.spawned = true;
@@ -103,6 +111,19 @@ export class DriveController {
         this.hud.message(this.rotateCamera ? 'Kamera dreht mit' : 'Norden oben', 1.2);
       }
       if (this.input.wasPressed('KeyH')) this.hud.toggleHelp();
+      if (this.input.wasPressed('KeyT') && this.traffic) {
+        this.traffic.enabled = !this.traffic.enabled;
+        if (!this.traffic.enabled) this.traffic.clear();
+        this.hud.message(this.traffic.enabled ? 'Verkehr an' : 'Verkehr aus', 1.2);
+      }
+      if (this.traffic && (this.input.wasPressed('Equal') || this.input.wasPressed('BracketRight') || this.input.wasPressed('NumpadAdd'))) {
+        this.traffic.density = Math.min(2.5, this.traffic.density + 0.25);
+        this.hud.message(`Verkehrsdichte ${Math.round(this.traffic.density * 100)} %`, 1.2);
+      }
+      if (this.traffic && (this.input.wasPressed('Minus') || this.input.wasPressed('Slash') || this.input.wasPressed('NumpadSubtract'))) {
+        this.traffic.density = Math.max(0.25, this.traffic.density - 0.25);
+        this.hud.message(`Verkehrsdichte ${Math.round(this.traffic.density * 100)} %`, 1.2);
+      }
     }
 
     // Physik in festen Schritten, nur wenn die Umgebung geladen ist
@@ -126,6 +147,12 @@ export class DriveController {
               this.hud.message(hit.speed > 12 ? 'Krach!' : 'Rumms', 0.9);
             }
           }
+        }
+        // andere Fahrzeuge
+        const imp = this.traffic?.collidePlayer() ?? 0;
+        if (imp > 3 && v.time - this.lastImpact > 0.6) {
+          this.lastImpact = v.time;
+          this.hud.message(imp > 10 ? 'Unfall!' : 'Blechschaden', 1.2);
         }
       }
       // Stadtgrenze

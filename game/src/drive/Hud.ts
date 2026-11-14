@@ -9,6 +9,7 @@ export class Hud {
   private msgEl = document.createElement('div');
   private helpEl = document.createElement('div');
   private loadingEl = document.createElement('div');
+  private violEl = document.createElement('div');
   private msgTimer = 0;
 
   constructor() {
@@ -19,6 +20,8 @@ export class Hud {
     this.msgEl.className = 'msg';
     this.helpEl.className = 'help';
     this.loadingEl.className = 'loading';
+    this.violEl.className = 'violations';
+    this.violEl.style.display = 'none';
     this.loadingEl.textContent = 'Lade Stadt …';
     this.helpEl.innerHTML = [
       '<b>W / ↑</b> Gas',
@@ -27,13 +30,14 @@ export class Hud {
       '<b>Leertaste</b> Handbremse',
       '<b>R</b> zurück auf die Straße',
       '<b>C</b> Kamera drehen',
+      '<b>T</b> Verkehr an/aus, <b>+ / −</b> Dichte',
       '<b>K</b> Karte / Debug',
       '<b>H</b> Hilfe aus',
     ].join('<br>');
     const dash = document.createElement('div');
     dash.className = 'dash';
     dash.append(this.limitEl, this.speedEl);
-    this.root.append(this.streetEl, dash, this.msgEl, this.helpEl, this.loadingEl);
+    this.root.append(this.streetEl, dash, this.msgEl, this.helpEl, this.loadingEl, this.violEl);
     document.body.append(this.root);
   }
 
@@ -62,6 +66,11 @@ export class Hud {
 
   toggleHelp(): void {
     this.helpEl.classList.toggle('hidden');
+  }
+
+  setViolations(n: number): void {
+    this.violEl.style.display = n ? '' : 'none';
+    this.violEl.textContent = `Rotlichtverstöße: ${n}`;
   }
 
   setLoading(v: boolean): void {

@@ -42,6 +42,10 @@ export class DebugUi {
   onPlaceCar?: (lane: Lane) => void;
   /** Aufruf bei Auswahl eines Orts (im Fahrmodus: Auto dorthin) */
   onJump?: (x: number, y: number) => void;
+  /** zusätzliche Auswahl (z. B. Fahrzeuge): liefert HTML für den Inspektor */
+  extraPick?: (x: number, y: number) => (() => string) | null;
+  extraStatus?: () => string;
+  private extraSel: (() => string) | null = null;
 
   constructor(
     private view: WorldView,
@@ -138,7 +142,13 @@ export class DebugUi {
       canvas.classList.remove('dragging');
       if (drag && !drag.moved && pointers.size === 0) {
         const rect = canvas.getBoundingClientRect();
-        this.select(view.pick(e.clientX - rect.left, e.clientY - rect.top));
+        const [wx, wy] = view.toWorld(e.clientX - rect.left, e.clientY - rect.top);
+        const extra = this.extraPick?.(wx, wy) ?? null;
+        if (extra) {
+          this.select(null);
+          this.extraSel = extra;
+          this.inspector.innerHTML = extra();
+        } else this.select(view.pick(e.clientX - rect.left, e.clientY - rect.top));
       }
       if (pointers.size === 0) drag = null;
     };
@@ -157,6 +167,7 @@ export class DebugUi {
   }
 
   select(p: Pick | null): void {
+    this.extraSel = null;
     this.selected = p;
     this.view.setHighlight(p);
     this.renderInspector();
@@ -213,10 +224,12 @@ export class DebugUi {
         `Spuren: ${s.lanes.toLocaleString('de')} · Verbinder: ${s.connectors.toLocaleString('de')}`,
         `Ampelanlagen: ${s.signalControllers.toLocaleString('de')} · Gebäude: ${s.buildings.toLocaleString('de')}`,
         `Datenstand: ${new Date(this.view.manifest.generatedAt).toLocaleDateString('de')}`,
+        this.extraStatus?.() ?? '',
         this.view.mpp >= 0.7 ? '<i>Für Spuren und Ampeln weiter hineinzoomen.</i>' : '',
         '<b>K</b> zurück zum Fahren',
       ].join('<br>');
     if (this.selected?.kind === 'signal') this.renderInspector();
+    if (this.extraSel) this.inspector.innerHTML = this.extraSel();
   }
 
   showError(msg: string): void {

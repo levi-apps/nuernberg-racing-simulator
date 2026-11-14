@@ -3,14 +3,59 @@ import type { Place } from '@nrs/shared';
 import { WorldView } from './world/WorldView.ts';
 import { DebugUi } from './debug/DebugUi.ts';
 import { DriveController } from './drive/DriveController.ts';
+import { TrafficSim } from './traffic/TrafficSim.ts';
+import { TrafficRenderer } from './traffic/TrafficRenderer.ts';
 
 const canvas = document.getElementById('map') as HTMLCanvasElement;
 const view = new WorldView(canvas);
 const debug = new DebugUi(view, canvas);
 const drive = new DriveController(view);
+const traffic = new TrafficSim(view, drive.car);
+const trafficView = new TrafficRenderer();
+view.scene.add(trafficView.group);
+view.onTileLoaded = (t) => traffic.graph.addTile(t);
+drive.traffic = traffic;
+drive.onTeleport = () => traffic.clear();
+traffic.onEvent = (e) => {
+  if (e.type === 'red_light') {
+    drive.hud.message('Rote Ampel überfahren!', 2);
+    drive.hud.setViolations(traffic.events.filter((x) => x.type === 'red_light').length);
+  }
+};
+
+const REASON_HELP: Record<string, string> = {
+  frei: 'freie Fahrt',
+  folgt: 'folgt dem Vordermann',
+  rot: 'wartet an roter/gelber Ampel',
+  Vorfahrt: 'lässt Vorfahrt',
+  'rechts vor links': 'rechts vor links',
+  Stopp: 'hält am Stoppschild',
+  'Kreuzung belegt': 'Kreuzung belegt',
+  'Ausfahrt voll': 'Stau hinter der Kreuzung',
+  Spieler: 'bremst wegen dir',
+  Unfall: 'Unfall',
+};
+debug.extraPick = (x, y) => {
+  const v = traffic.vehicleAt(x, y);
+  if (!v) return null;
+  return () =>
+    [
+      `<b>Fahrzeug ${v.id}</b> (${v.type === 'bus' ? 'Bus' : v.type === 'van' ? 'Transporter' : 'Pkw'}, ${v.len.toFixed(1)} m)`,
+      `Tempo ${(v.v * 3.6).toFixed(0)} km/h, Beschl. ${v.a.toFixed(1)} m/s²`,
+      `Zustand: ${REASON_HELP[v.reason] ?? v.reason}`,
+      v.waitTime > 0.5 ? `wartet seit ${v.waitTime.toFixed(0)} s` : '',
+      `Route: ${v.route
+        .slice(0, 6)
+        .map((k) => ((k & 1) === 1 ? `V${k >> 1}` : `S${k >> 1}`))
+        .join(' → ')}`,
+    ]
+      .filter(Boolean)
+      .join('\n');
+};
+debug.extraStatus = () => `KI-Fahrzeuge: ${traffic.count}${traffic.enabled ? '' : ' (aus)'}`;
 
 // für Debugging in der Browser-Konsole
-Object.assign(window as object, { map: view, drive });
+Object.assign(window as object, { map: view, drive, traffic });
 
 type Mode = 'drive' | 'map';
 let mode: Mode = 'drive';
@@ -81,6 +126,8 @@ async function main() {
     const dt = Math.min(0.1, (t - last) / 1000);
     last = t;
     drive.update(dt);
+    if (drive.spawnedOk) traffic.update(dt);
+    trafficView.update(traffic.vehicles);
     view.render();
     if (mode === 'drive' && t - lastSlow > 1000) view.onChange?.();
     if (t - lastSlow > 500) {
