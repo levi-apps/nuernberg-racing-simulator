@@ -29,6 +29,8 @@ export class DriveController {
   private camHeading = 0;
   /** Blickwinkel relativ zur Fahrtrichtung (Zurückschauen mit B) */
   lookAngle = 0;
+  /** Kamerawackeln 0..1 (nach Aufprall) */
+  shake = 0;
   private lastHandbrake = false;
   private lastBrake = 0;
   private camSpeed = 0;
@@ -167,6 +169,7 @@ export class DriveController {
         if (boosting) {
           if (!this.infiniteNitro) this.nitro = Math.max(0, this.nitro - PHYS_DT);
         } else this.nitro = Math.min(this.nitroCap, this.nitro + (PHYS_DT * this.nitroCap) / 25);
+        car.gripScale = this.view.gfx.weather.grip;
         car.step(PHYS_DT, inp);
         // Auf Brücken und in Tunneln keine Gebäudekollision
         if (car.layer === 0 && !this.ghost) {
@@ -176,6 +179,7 @@ export class DriveController {
             if (hit && hit.speed > 4 && v.time - this.lastImpact > 0.6) {
               this.lastImpact = v.time;
               this.hud.message(hit.speed > 12 ? 'Krach!' : 'Rumms', 0.9);
+              this.shake = Math.min(1, this.shake + hit.speed / 15);
               this.onImpact?.(hit.speed);
             }
           }
@@ -185,6 +189,7 @@ export class DriveController {
         if (imp > 3 && v.time - this.lastImpact > 0.6) {
           this.lastImpact = v.time;
           this.hud.message(imp > 10 ? 'Unfall!' : 'Blechschaden', 1.2);
+          this.shake = Math.min(1, this.shake + imp / 15);
           this.onImpact?.(imp);
         }
       }
@@ -289,7 +294,15 @@ export class DriveController {
       const look = this.lookAngle + (this.input.isDown('KeyB') ? Math.PI : 0);
       const hx = Math.cos(this.camHeading + look);
       const hy = Math.sin(this.camHeading + look);
-      v.cam3dPos.set(car.x - hx * back, car.y - hy * back, up);
+      // Kamerawackeln nach Aufprall und leicht bei hohem Tempo
+      this.shake = Math.max(0, this.shake - dt * 2.5);
+      const sh = this.shake * this.shake * 0.6 + Math.max(0, speed - 25) * 0.0015;
+      const t = v.time;
+      v.cam3dPos.set(car.x - hx * back + Math.sin(t * 37) * sh, car.y - hy * back + Math.cos(t * 41) * sh, up + Math.sin(t * 53) * sh * 0.7);
+      // Sichtfeld weitet sich mit Tempo und Nitro
+      const fovT = 52 + Math.min(14, Math.max(0, speed - 8) * 0.22) + car.boost * 9;
+      v.cam3d.fov += (fovT - v.cam3d.fov) * (1 - Math.exp(-dt * 3));
+      v.gfx.speedFx = Math.min(1, Math.max(0, (speed - 22) / 40) * 0.8 + car.boost * 0.35);
       v.cam3dTarget.set(car.x + hx * ahead, car.y + hy * ahead, 1.2);
       // Kachelauswahl um einen Punkt vor dem Auto; Maßstab für Detailstufen
       v.cx = car.x + hx * v.radius3d * 0.45;

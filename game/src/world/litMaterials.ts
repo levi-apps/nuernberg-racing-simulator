@@ -10,6 +10,10 @@ import { Pat, SHADOW_MAT, shared } from './materials.ts';
 export const lit = {
   /** 0 = Tag, 1 = tiefe Nacht */
   uNight: { value: 0 },
+  /** Nässe 0..1 (Regen) */
+  uWet: { value: 0 },
+  /** Schneedecke 0..1 */
+  uSnow: { value: 0 },
 };
 
 /** zusätzliche Muster nur für 3D */
@@ -35,6 +39,9 @@ const COMMON = /* glsl */ `
 uniform int uPat;
 uniform float uTime;
 uniform float uNight;
+uniform float uWet;
+uniform float uSnow;
+varying vec3 vPWN;
 varying vec2 vPW;
 varying vec2 vPUv;
 float gPatRough = -1.0;
@@ -164,6 +171,33 @@ void applyPattern(inout vec3 c) {
     gPatEmis = vec3(1.0, 0.82, 0.55) * uNight * 6.0;
   }
 }
+
+void applyWeather(inout vec3 c) {
+  if (uPat == 11 || uPat == 5) return;
+  float flatness = abs(vPWN.z);
+  // Schnee: auf allem, was nach oben zeigt; Fahrbahnen nur am Rand und zwischen den Spuren
+  float snowAmt = 0.0;
+  if (uSnow > 0.01) {
+    float n = fbm(vPW * 0.35);
+    snowAmt = uSnow * smoothstep(0.45, 0.85, flatness);
+    if (uPat == 1) snowAmt *= 0.3 + 0.45 * smoothstep(0.45, 0.7, fbm(vPW * 0.8 + 3.0));
+    else if (uPat == 2) snowAmt *= 0.8;
+    snowAmt *= smoothstep(0.15, 0.5, n + uSnow * 0.45);
+    snowAmt = clamp(snowAmt, 0.0, 1.0);
+    c = mix(c, vec3(0.9, 0.93, 0.98), snowAmt);
+    if (snowAmt > 0.3) gPatRough = 0.55;
+  }
+  // Nässe: dunkler und glänzend, Pfützen spiegeln
+  if (uWet > 0.01) {
+    float ground = smoothstep(0.6, 0.9, flatness);
+    float puddle = smoothstep(0.52, 0.62, fbm(vPW * 0.18 + 11.0)) * ground;
+    bool hard = uPat == 0 || uPat == 1 || uPat == 2 || uPat == 6 || uPat == 7 || uPat == 10;
+    float w = uWet * (hard ? 1.0 : 0.45) * (1.0 - snowAmt * 0.8);
+    c *= 1.0 - w * (0.32 + 0.25 * puddle);
+    float rr = gPatRough >= 0.0 ? gPatRough : roughness;
+    gPatRough = mix(rr, mix(0.16, 0.025, puddle), w * mix(0.4, 1.0, ground));
+  }
+}
 `;
 
 const cache = new Map<string, THREE.MeshStandardMaterial>();
@@ -195,8 +229,10 @@ export function patternize(m: THREE.Material, pat: number): void {
     sh.uniforms.uPat = { value: pat };
     sh.uniforms.uTime = shared.uTime;
     sh.uniforms.uNight = lit.uNight;
+    sh.uniforms.uWet = lit.uWet;
+    sh.uniforms.uSnow = lit.uSnow;
     sh.vertexShader = sh.vertexShader
-      .replace('#include <common>', '#include <common>\nvarying vec2 vPW;\nvarying vec2 vPUv;')
+      .replace('#include <common>', '#include <common>\nvarying vec2 vPW;\nvarying vec2 vPUv;\nvarying vec3 vPWN;')
       .replace(
         '#include <project_vertex>',
         `#include <project_vertex>
@@ -208,11 +244,12 @@ export function patternize(m: THREE.Material, pat: number): void {
           pw = modelMatrix * pw;
           vPW = pw.xy;
           vPUv = uv;
+          vPWN = normalize(mat3(modelMatrix) * objectNormal);
         }`,
       );
     sh.fragmentShader = sh.fragmentShader
       .replace('#include <common>', '#include <common>\n' + COMMON)
-      .replace('#include <color_fragment>', '#include <color_fragment>\napplyPattern(diffuseColor.rgb);')
+      .replace('#include <color_fragment>', '#include <color_fragment>\napplyPattern(diffuseColor.rgb);\napplyWeather(diffuseColor.rgb);')
       .replace('#include <roughnessmap_fragment>', '#include <roughnessmap_fragment>\nif (gPatRough >= 0.0) roughnessFactor = gPatRough;')
       .replace('#include <emissivemap_fragment>', '#include <emissivemap_fragment>\ntotalEmissiveRadiance += gPatEmis;');
   };

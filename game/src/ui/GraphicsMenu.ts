@@ -2,7 +2,8 @@
  * Grafik-Einstellungen (Zahnrad oben rechts): Qualitätsstufe, Tageszeit und Ansicht.
  * Der Knopf zeigt gleichzeitig die Uhrzeit im Spiel.
  */
-import { QUALITY, type Graphics, type Quality } from '../world/Graphics.ts';
+import { QUALITY, type Graphics, type QualitySetting } from '../world/Graphics.ts';
+import { WEATHER_LABEL, type WeatherKind } from '../world/Weather.ts';
 
 export class GraphicsMenu {
   private btn = document.createElement('button');
@@ -23,7 +24,8 @@ export class GraphicsMenu {
       const el = (e.target as HTMLElement).closest('[data-act]') as HTMLElement | null;
       if (!el) return;
       const a = el.dataset.act;
-      if (a === 'q') gfx.setQuality(el.dataset.v as Quality);
+      if (a === 'q') gfx.setQuality(el.dataset.v as QualitySetting);
+      if (a === 'w') gfx.weather.setKind(el.dataset.v as WeatherKind);
       if (a === 'hour') gfx.setHour(Number(el.dataset.v), false);
       if (a === 'cycle') gfx.setHour(gfx.settings.hour, !gfx.settings.cycle);
       if (a === 'view') this.onView3D?.(!this.is3D?.());
@@ -67,8 +69,12 @@ export class GraphicsMenu {
 
   private render(): void {
     const s = this.gfx.settings;
-    const qs = (Object.keys(QUALITY) as Quality[])
-      .map((q) => `<button data-act="q" data-v="${q}" class="${s.quality === q ? 'on' : ''}">${QUALITY[q].label}</button>`)
+    const qs = (['auto', ...Object.keys(QUALITY)] as QualitySetting[])
+      .map((q) => `<button data-act="q" data-v="${q}" class="${s.quality === q ? 'on' : ''}">${q === 'auto' ? 'Auto' : QUALITY[q].label}</button>`)
+      .join('');
+    const eff = QUALITY[this.gfx.effective];
+    const ws = (Object.keys(WEATHER_LABEL) as WeatherKind[])
+      .map((k) => `<button data-act="w" data-v="${k}" class="${this.gfx.weather.kind === k ? 'on' : ''}">${WEATHER_LABEL[k]}</button>`)
       .join('');
     const times: Array<[string, number]> = [
       ['🌅 Morgen', 7],
@@ -78,7 +84,8 @@ export class GraphicsMenu {
     ];
     this.root.innerHTML = `<div class="gm-head"><b>Grafik</b><button data-act="close">✕</button></div>
       <h4>Qualität</h4><div class="gm-row">${qs}</div>
-      <p class="gm-note">${QUALITY[s.quality].shadows ? 'Echte Schatten' : 'Einfache Schatten'}${QUALITY[s.quality].ao ? ', Umgebungsverdeckung' : ''}${QUALITY[s.quality].bloom ? ', Leuchteffekte' : ''} · Sichtweite ${QUALITY[s.quality].radius} m</p>
+      <p class="gm-note">${s.quality === 'auto' ? `Auto (passt sich an), gerade: <b>${eff.label}</b> · ` : ''}${eff.shadows ? 'Echte Schatten' : 'Einfache Schatten'}${eff.ao ? ', Umgebungsverdeckung, Lichtstrahlen' : ''}${eff.bloom ? ', Leuchteffekte' : ''} · Sichtweite ${eff.radius} m</p>
+      <h4>Wetter <span>${WEATHER_LABEL[this.gfx.weather.current]}</span></h4><div class="gm-row">${ws}</div>
       <h4>Tageszeit <span id="gfx-time">${clock(s.hour)}</span></h4>
       <input type="range" data-opt="hour" min="0" max="23.99" step="0.05" value="${s.hour}">
       <div class="gm-row">${times.map(([l, h]) => `<button data-act="hour" data-v="${h}">${l}</button>`).join('')}</div>

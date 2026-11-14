@@ -64,6 +64,8 @@ export class Car {
   boost = 0;
   /** Tempo-Faktor aus dem Admin-Panel */
   power = 1;
+  /** Haftung je nach Wetter (1 = trocken) */
+  gripScale = 1;
 
   constructor(public spec: CarSpec = DEFAULT_CAR) {}
 
@@ -136,7 +138,7 @@ export class Car {
     this.heading += yaw * dt;
 
     // Seitenführung
-    const grip = (inp.handbrake ? s.driftGrip : s.grip) * g.grip;
+    const grip = (inp.handbrake ? s.driftGrip : s.grip) * g.grip * this.gripScale;
     vL *= Math.exp(-grip * dt);
 
     // neu zusammensetzen in der gedrehten Fahrtrichtung

@@ -142,7 +142,7 @@ export class CarMesh {
 
     // ---------------- 3D: gerundete Karosserie mit Lackspiegelung, Räder mit Felgen
     const parts = carParts(body, L, W);
-    const paint = new THREE.MeshPhysicalMaterial({ color, metalness: 0.45, roughness: 0.32, clearcoat: 1, clearcoatRoughness: 0.06, transparent: true });
+    const paint = new THREE.MeshPhysicalMaterial({ color, metalness: 0.45, roughness: 0.32, clearcoat: 1, clearcoatRoughness: 0.14, transparent: true });
     this.brake3d = new THREE.MeshStandardMaterial({ color: 0x5a0000, emissive: 0xff1a10, emissiveIntensity: 0.4, roughness: 0.3, transparent: true });
     const mats = carMaterials(paint, this.brake3d);
     const bodyMesh = new THREE.Mesh(parts.body, mats);

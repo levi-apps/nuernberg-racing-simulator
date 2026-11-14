@@ -16,8 +16,12 @@ import { lit } from './litMaterials.ts';
 import { SHADOW_MAT } from './materials.ts';
 import { render3d } from './render3d.ts';
 import { carLights } from '../drive/CarModel.ts';
+import { Weather } from './Weather.ts';
+import { GradeShader } from './GradeShader.ts';
 
 export type Quality = 'low' | 'medium' | 'high' | 'ultra';
+export type QualitySetting = Quality | 'auto';
+const LEVELS: Quality[] = ['low', 'medium', 'high', 'ultra'];
 
 export interface QualitySpec {
   label: string;
@@ -40,7 +44,7 @@ export const QUALITY: Record<Quality, QualitySpec> = {
 };
 
 export interface GraphicsSettings {
-  quality: Quality;
+  quality: QualitySetting;
   /** feste Uhrzeit oder Tageszyklus */
   cycle: boolean;
   hour: number;
@@ -73,7 +77,14 @@ uniform vec3 uSunDir;
 uniform vec3 uSunCol;
 uniform vec3 uMoonDir;
 uniform float uNight;
+uniform float uCloud;
+uniform float uTime;
+uniform float uFlash;
+uniform float uDay;
 varying vec3 vDir;
+float hh(vec2 p) { p = mod(p, 512.0); vec3 p3 = fract(vec3(p.xyx) * 0.1031); p3 += dot(p3, p3.yzx + 33.33); return fract((p3.x + p3.y) * p3.z); }
+float vn(vec2 p) { vec2 i = floor(p); vec2 f = fract(p); vec2 u = f * f * (3.0 - 2.0 * f); return mix(mix(hh(i), hh(i + vec2(1.0, 0.0)), u.x), mix(hh(i + vec2(0.0, 1.0)), hh(i + vec2(1.0, 1.0)), u.x), u.y); }
+float fb(vec2 p) { float s = 0.0; float a = 0.5; for (int i = 0; i < 5; i++) { s += a * vn(p); p = p * 2.07 + 3.1; a *= 0.5; } return s; }
 float h31(vec3 p) {
   p = fract(p * 0.3183099 + 0.1);
   p *= 17.0;
@@ -97,6 +108,19 @@ void main() {
     float md = max(dot(d, normalize(uMoonDir)), 0.0);
     col += vec3(0.85, 0.88, 1.0) * (step(0.99965, md) * 3.0 + pow(md, 60.0) * 0.12) * uNight;
   }
+  // Wolken: Ebene über der Stadt, langsam ziehend
+  if (up > 0.0 && uCloud > 0.02) {
+    vec2 cp = d.xy / max(d.z, 0.04) * 1.4 + vec2(uTime * 0.008, uTime * 0.003);
+    float n = fb(cp);
+    float cov = smoothstep(1.0 - uCloud * 0.95, 1.18 - uCloud * 0.6, n + 0.25);
+    float shade = fb(cp * 1.7 + 4.0);
+    vec3 cc = mix(vec3(0.62, 0.65, 0.7), vec3(1.0), shade * (0.5 + 0.5 * uDay));
+    cc *= 0.25 + 0.75 * uDay;
+    cc += uSunCol * pow(sd, 6.0) * 0.4 * uDay;
+    cc = mix(cc, cc * vec3(0.55, 0.58, 0.65), uCloud * uCloud);
+    col = mix(col, cc, cov * smoothstep(0.0, 0.12, up));
+  }
+  col += vec3(0.7, 0.75, 1.0) * uFlash * 0.8;
   gl_FragColor = vec4(col, 1.0);
 }`;
 
@@ -130,6 +154,17 @@ export class Graphics {
   private zenith = new THREE.Color();
   private sunCol = new THREE.Color();
   onChange?: () => void;
+  readonly weather: Weather;
+  private grade: ShaderPass | null = null;
+  private envCloud = -1;
+  /** Fahrzeugzustand für Kamera-Effekte */
+  speedFx = 0;
+  /** automatische Qualität */
+  private autoLevel = 2;
+  private fpsAcc = 0;
+  private fpsFrames = 0;
+  private fpsGood = 0;
+  private autoChanges = 0;
 
   constructor(
     private renderer: THREE.WebGLRenderer,
@@ -143,8 +178,10 @@ export class Graphics {
       /* egal */
     }
     const mobile = /Android|iPhone|iPad/i.test(navigator.userAgent);
-    this.settings = { quality: mobile ? 'medium' : 'high', cycle: true, hour: 14, dayMinutes: 24, ...s };
-    this.spec = QUALITY[this.settings.quality];
+    this.settings = { quality: 'auto', cycle: true, hour: 14, dayMinutes: 24, ...s };
+    this.autoLevel = mobile ? 1 : 2;
+    this.spec = QUALITY[this.effective];
+    this.weather = new Weather(scene);
 
     this.skyMat = new THREE.ShaderMaterial({
       vertexShader: skyVert,
@@ -158,6 +195,10 @@ export class Graphics {
         uSunCol: { value: this.sunCol },
         uMoonDir: { value: this.moonDir },
         uNight: { value: 0 },
+        uCloud: { value: 0 },
+        uTime: { value: 0 },
+        uFlash: { value: 0 },
+        uDay: { value: 1 },
       },
     });
     this.skyScene.add(new THREE.Mesh(new THREE.SphereGeometry(1000, 48, 24), this.skyMat));
@@ -187,9 +228,14 @@ export class Graphics {
     }
   }
 
-  setQuality(q: Quality): void {
+  /** tatsächlich genutzte Stufe (bei "Auto" nach gemessener Leistung) */
+  get effective(): Quality {
+    return this.settings.quality === 'auto' ? LEVELS[this.autoLevel] : this.settings.quality;
+  }
+
+  setQuality(q: QualitySetting): void {
     this.settings.quality = q;
-    this.spec = QUALITY[q];
+    this.spec = QUALITY[this.effective];
     this.save();
     this.applyQuality();
     this.onChange?.();
@@ -249,7 +295,6 @@ export class Graphics {
     const r = this.renderer;
     const w = r.domElement.clientWidth || 1;
     const h = r.domElement.clientHeight || 1;
-    if (!q.bloom && !q.ao && q.aa === 'none') return;
     const target = new THREE.WebGLRenderTarget(w * q.pixelRatio, h * q.pixelRatio, { type: THREE.HalfFloatType, samples: q.aa === 'smaa' ? 0 : 4 });
     const c = new EffectComposer(r, target);
     c.setPixelRatio(q.pixelRatio);
@@ -262,8 +307,11 @@ export class Graphics {
       this.aoPass.updateGtaoMaterial({ radius: 1.6, distanceExponent: 1.5, thickness: 1.2, scale: 1, samples: q.shadows >= 4096 ? 16 : 12 });
       c.addPass(this.aoPass);
     }
-    if (q.bloom) c.addPass(new UnrealBloomPass(new THREE.Vector2(w, h), 0.5, 0.5, 0.95));
+    if (q.bloom) c.addPass(new UnrealBloomPass(new THREE.Vector2(w, h), 0.42, 0.5, 0.96));
     c.addPass(new OutputPass());
+    this.grade = new ShaderPass(GradeShader);
+    this.grade.uniforms.uRays.value = q.ao ? 1 : 0;
+    c.addPass(this.grade);
     if (q.aa === 'smaa') c.addPass(new SMAAPass());
     else if (q.aa === 'fxaa') {
       const fx = new ShaderPass(FXAAShader);
@@ -276,6 +324,7 @@ export class Graphics {
   /** Tageszeit fortschreiben und Licht/Himmel einstellen */
   update(dt: number): void {
     const s = this.settings;
+    this.autoQuality(dt);
     if (s.cycle) s.hour = (s.hour + (dt * 24) / (s.dayMinutes * 60)) % 24;
     const h = s.hour;
     // Sonne: Aufgang 6 Uhr im Osten, Mittag im Süden (55°), Untergang 18 Uhr im Westen
@@ -297,16 +346,28 @@ export class Graphics {
     this.horizon.copy(SKY.dayHor).lerp(SKY.duskHor, dusk).lerp(SKY.nightHor, this.night);
     this.sunCol.setRGB(1, 0.95, 0.88).lerp(new THREE.Color(1, 0.55, 0.25), dusk);
     this.skyMat.uniforms.uNight.value = this.night;
+    const w = this.weather;
+    w.update(dt, performance.now() / 1000, this.camera.position, true, h);
+    const cl = w.cloud;
+    // Bewölkung: grauer Himmel, weniger Sonne, mehr diffuses Licht
+    const grey = new THREE.Color(0.55, 0.58, 0.62).multiplyScalar(0.25 + 0.75 * this.day);
+    this.zenith.lerp(grey, cl * 0.7);
+    this.horizon.lerp(grey.clone().multiplyScalar(1.15), cl * 0.6);
+    this.skyMat.uniforms.uCloud.value = cl;
+    this.skyMat.uniforms.uTime.value = performance.now() / 1000;
+    this.skyMat.uniforms.uFlash.value = w.flash;
+    this.skyMat.uniforms.uDay.value = this.day;
 
     // Schlüssellicht: Sonne bei Tag, Mond bei Nacht
     const moon = this.night > 0.5;
     const key = moon ? this.moonDir : this.sunDir;
     this.sun.color.copy(moon ? new THREE.Color(0.55, 0.65, 0.95) : this.sunCol);
-    this.sun.intensity = moon ? 0.35 * this.night : 2.7 * this.day;
-    this.hemi.color.copy(this.zenith).lerp(new THREE.Color(1, 1, 1), 0.72);
+    this.sun.intensity = (moon ? 0.35 * this.night : 3.1 * this.day) * (1 - 0.82 * Math.pow(cl, 1.4));
+    this.hemi.color.copy(this.zenith).lerp(new THREE.Color(1, 0.98, 0.95), 0.84);
     this.hemi.groundColor.setRGB(0.42, 0.38, 0.32).multiplyScalar(0.35 + 0.65 * this.day);
-    this.hemi.intensity = 0.22 + 0.75 * this.day + 0.2 * dusk;
+    this.hemi.intensity = 0.22 + (0.75 + 0.35 * cl) * this.day + 0.2 * dusk + w.flash * 4;
     this.fog.color.copy(this.horizon);
+    this.fogScale = 1 - 0.45 * w.rain - 0.35 * w.snow;
     this.scene.environmentIntensity = 0.1 + 0.5 * this.day;
     this.headlight.intensity = 260 * Math.max(this.night, 0.6 * dusk);
     for (const l of this.lampLights) l.intensity = 60 * this.night;
@@ -314,13 +375,43 @@ export class Graphics {
 
     // Himmel als Würfeltextur neu zeichnen, wenn sich die Zeit merklich geändert hat
     this.envTimer -= dt;
-    if (Math.abs(h - this.envHour) > 0.08 && this.envTimer <= 0) {
+    if ((Math.abs(h - this.envHour) > 0.08 || Math.abs(cl - this.envCloud) > 0.04) && this.envTimer <= 0) {
       this.envTimer = 0.5;
       this.envHour = h;
+      this.envCloud = cl;
       this.renderSky();
     }
   }
   private keyDir = new THREE.Vector3(0, 0, 1);
+  private fogScale = 1;
+
+  /** Stufe bei "Auto" an die gemessene Bildrate anpassen (mit Zurückhaltung, Wechsel kosten kurz Zeit) */
+  private autoQuality(dt: number): void {
+    if (this.settings.quality !== 'auto' || this.autoChanges >= 6) return;
+    this.fpsAcc += dt;
+    this.fpsFrames++;
+    if (this.fpsAcc < 4) return;
+    const fps = this.fpsFrames / this.fpsAcc;
+    this.fpsAcc = 0;
+    this.fpsFrames = 0;
+    if (fps < 34 && this.autoLevel > 0) {
+      this.autoLevel--;
+      this.autoChanges++;
+      this.fpsGood = 0;
+      this.spec = QUALITY[this.effective];
+      this.applyQuality();
+      this.onChange?.();
+    } else if (fps > 57) {
+      if (++this.fpsGood >= 3 && this.autoLevel < 3) {
+        this.autoLevel++;
+        this.autoChanges++;
+        this.fpsGood = 0;
+        this.spec = QUALITY[this.effective];
+        this.applyQuality();
+        this.onChange?.();
+      }
+    } else this.fpsGood = 0;
+  }
 
   private renderSky(): void {
     const r = this.renderer;
@@ -371,8 +462,8 @@ export class Graphics {
     const scene = this.scene;
     const q = this.spec;
     this.camera.far = q.radius + 900;
-    this.fog.near = q.radius * 0.45;
-    this.fog.far = q.radius * 1.0;
+    this.fog.near = q.radius * 0.45 * this.fogScale * this.fogScale;
+    this.fog.far = q.radius * (0.4 + 0.6 * this.fogScale);
     scene.fog = this.fog;
     scene.background = null;
     this.skyDome.visible = true;
@@ -383,6 +474,22 @@ export class Graphics {
     r.toneMappingExposure = 1.0;
     SHADOW_MAT.visible = q.shadows === 0;
     if (q.shadows > 0) r.shadowMap.needsUpdate = true;
+    if (this.grade) {
+      const u = this.grade.uniforms;
+      const w = r.domElement.clientWidth || 1;
+      const hgt = r.domElement.clientHeight || 1;
+      u.uAspect.value = w / hgt;
+      // Sonne auf dem Bildschirm
+      const sp = this.camera.position.clone().addScaledVector(this.sunDir, 600).project(this.camera);
+      const inFront = sp.z < 1 && this.sunDir.z > -0.02;
+      const edge = Math.max(Math.abs(sp.x), Math.abs(sp.y));
+      u.uSunUv.value.set(sp.x * 0.5 + 0.5, sp.y * 0.5 + 0.5);
+      u.uSunVis.value = inFront ? this.day * (1 - this.weather.cloud) * THREE.MathUtils.clamp(1.3 - edge, 0, 1) : 0;
+      u.uBlur.value = this.speedFx;
+      u.uFlash.value = this.weather.flash * 0.3;
+      u.uGloom.value = this.weather.cloud * 0.6 + this.weather.rain * 0.4;
+      u.uNight.value = this.night;
+    }
     if (this.composer) {
       this.composer.render();
     } else {

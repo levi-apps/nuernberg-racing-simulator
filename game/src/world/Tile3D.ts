@@ -10,6 +10,7 @@ import { Pat } from './materials.ts';
 import { litSurface, PAT_LAMP, PAT_ROOF_FLAT } from './litMaterials.ts';
 import { edgeNormal, hash, pick, ridgeProj, roofInfo, type SignalSlot } from './TileView.ts';
 import { TREE_GREENS } from './style.ts';
+import { AD, adMaterial, type AdRegion } from './Ads.ts';
 
 /** Fassadenfarben: Putz, Sandstein (Nürnberger Altstadt), Beton */
 const FACADE = [0xe3d9c6, 0xd8cbb2, 0xcdb895, 0xe8e2d6, 0xc7ae8c, 0xd2c2a6, 0xbfa483, 0xe0d4bd, 0xe6d3b8, 0xd9c9b0, 0xc9b9a4, 0xb39472];
@@ -30,7 +31,9 @@ export function buildTile3D(t: Tile): Tile3D {
   const roofs = new Mesh3DBuilder();
   const flatRoofs = new Mesh3DBuilder();
   const solid = new Mesh3DBuilder();
-  for (const b of t.buildings) building(b, walls, roofs, flatRoofs, solid);
+  const ads = new Mesh3DBuilder();
+  adMaterial(); // Texturkarte und Bereiche anlegen
+  for (const b of t.buildings) building(b, walls, roofs, flatRoofs, solid, ads);
 
   // Bäume: Stamm und Krone aus mehreren Ballen
   const trunks = new Mesh3DBuilder();
@@ -117,6 +120,18 @@ export function buildTile3D(t: Tile): Tile3D {
           const qy = py + ny * 0.7;
           streetLamp(poles, lampHeads, qx, qy, -nx, -ny);
           streetLamps.push([qx - nx * 1.5, qy - ny * 1.5, 7.0]);
+          // Werbung: große Plakatwände an Hauptstraßen, Litfaßsäulen in Wohnstraßen
+          const hv = hash(Math.round(px * 7) * 92821 + Math.round(py * 7));
+          const big = s.cls === 'primary' || s.cls === 'secondary' || s.cls === 'trunk' || s.cls === 'tertiary';
+          if (big && hv < 0.42) {
+            const bx = px + nx * 3.6;
+            const by = py + ny * 3.6;
+            if (!insideBuilding(t, bx, by, 4)) billboard(poles, ads, bx, by, -nx, -ny, hv < 0.21 ? 1 : -1, Math.floor(hv * 1000));
+          } else if (!big && hv < 0.12) {
+            const lx = px + nx * 1.7;
+            const ly = py + ny * 1.7;
+            if (!insideBuilding(t, lx, ly, 1.2)) litfass(solid, ads, lx, ly, Math.floor(hv * 1000));
+          }
         }
         acc += seg;
       }
@@ -145,6 +160,7 @@ export function buildTile3D(t: Tile): Tile3D {
   add(crowns, litSurface(Pat.Canopy, 1, true), 11.1, 'trees');
   add(poles, litSurface(Pat.Plain, 1, true), 12, 'signals');
   add(lampHeads, litSurface(PAT_LAMP, 1, true), 12.05, 'signals', false);
+  add(ads, adMaterial(), 12.2, 'buildings');
   let lampAttr: THREE.BufferAttribute | null = null;
   if (!lamps.empty) {
     const g = lamps.build();
@@ -186,7 +202,7 @@ function streetLamp(poles: Mesh3DBuilder, heads: Mesh3DBuilder, x: number, y: nu
   box(heads, hx, hy, H - 0.28, H - 0.06, 0.75, 0.3, Math.atan2(dy, dx), 0xf4ecd8);
 }
 
-function building(b: Building, walls: Mesh3DBuilder, roofs: Mesh3DBuilder, flatRoofs: Mesh3DBuilder, solid: Mesh3DBuilder): void {
+function building(b: Building, walls: Mesh3DBuilder, roofs: Mesh3DBuilder, flatRoofs: Mesh3DBuilder, solid: Mesh3DBuilder, ads: Mesh3DBuilder): void {
   const r = roofInfo(b);
   if (!r) return;
   const { pts, color } = r;
@@ -222,6 +238,54 @@ function building(b: Building, walls: Mesh3DBuilder, roofs: Mesh3DBuilder, flatR
       if (r.ccw) walls.quad(a, bb, c, d);
       else walls.quad(a, d, c, bb);
       u += el;
+    }
+  }
+  // Werbebanner an der Fassade (viele!)
+  if (top - z0 >= 6.5 && b.t !== 'church' && b.t !== 'cathedral') {
+    let placed = 0;
+    for (let i = 0; i < n && placed < 3; i++) {
+      const [px, py] = pts[i];
+      const [qx, qy] = pts[(i + 1) % n];
+      const el = Math.hypot(qx - px, qy - py);
+      const hb = hash(b.id * 7 + i * 131);
+      if (el < 6 || hb > 0.58) continue;
+      const [nx, ny] = edgeNormal(r, i);
+      const portrait = el < 13 || hb < 0.12;
+      const w = portrait ? Math.min(4.2, el * 0.45) : Math.min(11, el * 0.65);
+      const h = portrait ? w * 1.5 : w * 0.5;
+      if (top - z0 < h + 2.5) continue;
+      const tt = 0.3 + hash(b.id + i * 17) * 0.4;
+      const cx = px + (qx - px) * tt;
+      const cy = py + (qy - py) * tt;
+      const z = z0 + Math.min(top - z0 - h - 0.8, 3.6 + hash(b.id * 3 + i) * Math.max(0, top - z0 - h - 4.5));
+      const regs = portrait ? AD.portrait : AD.landscape;
+      adPanel(ads, cx + nx * 0.12, cy + ny * 0.12, z, nx, ny, w, h, regs[Math.floor(hb * 997) % regs.length]);
+      placed++;
+    }
+  }
+  // Leuchtreklame auf hohen Flachdächern
+  if (r.kind === 'flat' && top - z0 > 14 && r.wid > 10 && hash(b.id + 77) < 0.4) {
+    let best = 0;
+    let bl = 0;
+    for (let i = 0; i < n; i++) {
+      const l = Math.hypot(pts[(i + 1) % n][0] - pts[i][0], pts[(i + 1) % n][1] - pts[i][1]);
+      if (l > bl) {
+        bl = l;
+        best = i;
+      }
+    }
+    const [px, py] = pts[best];
+    const [qx, qy] = pts[(best + 1) % n];
+    const [nx, ny] = edgeNormal(r, best);
+    const w = Math.min(14, bl * 0.75);
+    const h = w * 0.25;
+    const cx = (px + qx) / 2 - nx * 0.6;
+    const cy = (py + qy) / 2 - ny * 0.6;
+    adPanel(ads, cx, cy, top + 0.6, nx, ny, w, h, AD.neon[Math.floor(hash(b.id) * 2)]);
+    for (const f of [-0.4, 0.4]) {
+      const ax = -ny * w * f;
+      const ay = nx * w * f;
+      box(solid, cx + ax - nx * 0.3, cy + ay - ny * 0.3, top, top + 0.7 + h * 0.6, 0.12, 0.12, 0, 0x2c2e33);
     }
   }
   if (r.kind === 'flat') {
@@ -368,4 +432,93 @@ function beam(m: Mesh3DBuilder, ax: number, ay: number, bx: number, by: number, 
   const ny = ((bx - ax) / l) * t;
   m.quad(m.vert(ax + nx, ay + ny, z, color), m.vert(bx + nx, by + ny, z, color), m.vert(bx - nx, by - ny, z, color), m.vert(ax - nx, ay - ny, z, color));
   m.quad(m.vert(ax + nx, ay + ny, z - t * 2, color), m.vert(bx + nx, by + ny, z - t * 2, color), m.vert(bx + nx, by + ny, z, color), m.vert(ax + nx, ay + ny, z, color));
+}
+
+/** Werbetafel: Vorderseite zeigt in Richtung (nx, ny), Mitte unten bei (cx, cy, z) */
+function adPanel(m: Mesh3DBuilder, cx: number, cy: number, z: number, nx: number, ny: number, w: number, h: number, r: AdRegion): void {
+  // rechte Hand des Betrachters, der auf die Tafel schaut
+  const rx = -ny;
+  const ry = nx;
+  const x0 = cx - (rx * w) / 2;
+  const y0 = cy - (ry * w) / 2;
+  const x1 = cx + (rx * w) / 2;
+  const y1 = cy + (ry * w) / 2;
+  const a = m.vert(x0, y0, z, 0xffffff, r.u0, r.v0);
+  const b = m.vert(x1, y1, z, 0xffffff, r.u1, r.v0);
+  const c = m.vert(x1, y1, z + h, 0xffffff, r.u1, r.v1);
+  const d = m.vert(x0, y0, z + h, 0xffffff, r.u0, r.v1);
+  m.quad(a, b, c, d);
+}
+
+/** Plakatwand auf zwei Pfosten, leicht zur Fahrbahn gedreht */
+function billboard(poles: Mesh3DBuilder, ads: Mesh3DBuilder, x: number, y: number, fx: number, fy: number, turn: number, seed: number): void {
+  const ang = Math.atan2(fy, fx) + turn * 0.45;
+  const nx = Math.cos(ang);
+  const ny = Math.sin(ang);
+  const w = 7.5;
+  const h = 3.6;
+  const z = 2.8;
+  const rx = -ny;
+  const ry = nx;
+  for (const f of [-0.3, 0.3]) cylinder(poles, x + rx * w * f - nx * 0.15, y + ry * w * f - ny * 0.15, 0.13, 0, z + h * 0.5, 0x3a3d42, 6);
+  // Rückseite und Rahmen
+  box(poles, x - nx * 0.12, y - ny * 0.12, z - 0.15, z + h + 0.15, w + 0.3, 0.18, Math.atan2(ry, rx), 0x26282d);
+  adPanel(ads, x + nx * 0.01, y + ny * 0.01, z, nx, ny, w, h, AD.landscape[seed % AD.landscape.length]);
+  // Strahler oben
+  for (const f of [-0.3, 0.3]) box(poles, x + rx * w * f + nx * 0.6, y + ry * w * f + ny * 0.6, z + h + 0.1, z + h + 0.3, 0.3, 0.3, 0, 0x1d1f22);
+}
+
+/** Litfaßsäule mit umlaufendem Plakat und Kuppel */
+function litfass(solid: Mesh3DBuilder, ads: Mesh3DBuilder, x: number, y: number, seed: number): void {
+  const r = 0.62;
+  const reg = AD.landscape[seed % AD.landscape.length];
+  const seg = 16;
+  cylinder(solid, x, y, r + 0.05, 0, 0.35, 0x2f4a3a, seg);
+  // Plakat zweimal herum (jede Hälfte zeigt das ganze Motiv)
+  for (let i = 0; i < seg; i++) {
+    const a0 = (i / seg) * Math.PI * 2;
+    const a1 = ((i + 1) / seg) * Math.PI * 2;
+    const f0 = ((i * 2) % seg) / seg;
+    const f1 = f0 + 2 / seg;
+    const u0 = reg.u0 + (reg.u1 - reg.u0) * f0;
+    const u1 = reg.u0 + (reg.u1 - reg.u0) * f1;
+    const p = (a: number, z: number, u: number, v: number) => ads.vert(x + Math.cos(a) * r, y + Math.sin(a) * r, z, 0xffffff, u, v);
+    ads.quad(p(a1, 0.35, u0, reg.v0), p(a0, 0.35, u1, reg.v0), p(a0, 2.75, u1, reg.v1), p(a1, 2.75, u0, reg.v1));
+  }
+  cylinder(solid, x, y, r + 0.08, 2.75, 2.95, 0x2f4a3a, seg);
+  blobCap(solid, x, y, 2.95, r + 0.05, 0x2f4a3a);
+}
+
+function blobCap(m: Mesh3DBuilder, x: number, y: number, z: number, r: number, color: number): void {
+  const seg = 12;
+  const top = m.vert(x, y, z + r * 0.6, color);
+  const base: number[] = [];
+  for (let i = 0; i < seg; i++) {
+    const a = (i / seg) * Math.PI * 2;
+    base.push(m.vert(x + Math.cos(a) * r, y + Math.sin(a) * r, z, color));
+  }
+  for (let i = 0; i < seg; i++) m.tri(base[i], base[(i + 1) % seg], top);
+}
+
+/** liegt der Punkt (mit Abstand) in einem Gebäude dieser Kachel? */
+function insideBuilding(t: Tile, x: number, y: number, pad: number): boolean {
+  const X = x * 10;
+  const Y = y * 10;
+  const P = pad * 10;
+  for (const b of t.buildings) {
+    const o = b.outer;
+    let x0 = Infinity;
+    let y0 = Infinity;
+    let x1 = -Infinity;
+    let y1 = -Infinity;
+    for (let i = 0; i < o.length; i += 2) {
+      x0 = Math.min(x0, o[i]);
+      x1 = Math.max(x1, o[i]);
+      y0 = Math.min(y0, o[i + 1]);
+      y1 = Math.max(y1, o[i + 1]);
+    }
+    if (X < x0 - P || X > x1 + P || Y < y0 - P || Y > y1 + P) continue;
+    if (inRing(o, X, Y) || inRing(o, X + P, Y) || inRing(o, X - P, Y) || inRing(o, X, Y + P) || inRing(o, X, Y - P)) return true;
+  }
+  return false;
 }
