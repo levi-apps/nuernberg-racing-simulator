@@ -16,6 +16,7 @@ import { GarageUi } from './garage/GarageUi.ts';
 import { formatDist, formatTime, MissionUi } from './missions/MissionUi.ts';
 import { StartMenu } from './ui/StartMenu.ts';
 import { AdminPanel } from './ui/AdminPanel.ts';
+import { GraphicsMenu } from './ui/GraphicsMenu.ts';
 import { BlipLayer, type Blip, type BlipKind } from './world/Blips.ts';
 import { TuningUi } from './garage/TuningUi.ts';
 import { NITRO_SECONDS, PARTS, tunedSpec } from './garage/Tuning.ts';
@@ -135,6 +136,10 @@ blips.onClick = (b) => {
   navi.setTarget({ ...b.target, label: b.name });
   missionUi.showToast(`<b>Wegpunkt gesetzt</b><br>${b.name}`, 2.5);
 };
+
+const gfxMenu = new GraphicsMenu(view.gfx);
+gfxMenu.is3D = () => drive.view3D;
+gfxMenu.onView3D = (on) => drive.setView3D(on);
 
 const admin = new AdminPanel({
   profile,
@@ -325,7 +330,8 @@ async function main() {
   };
   if (!h) openMenu(false);
   try {
-    if (localStorage.getItem('nrs.view3d') === '1') drive.setView3D(true);
+    // 3D-Ansicht ist Standard, außer man hat zuletzt die Draufsicht gewählt
+    if (localStorage.getItem('nrs.view3d') !== '0') drive.setView3D(true);
   } catch {
     /* egal */
   }
@@ -355,6 +361,7 @@ async function main() {
   let lastSlow = 0;
   let lastSave = 0;
   let lastBlips = 0;
+  let lastClock = 0;
   const loop = (t: number) => {
     const dtReal = Math.min(0.1, (t - last) / 1000);
     const dt = dtReal * admin.timeScale;
@@ -377,6 +384,10 @@ async function main() {
     if (t - lastBlips > 1000 && jobs) {
       lastBlips = t;
       blips.setDynamic(jobs.jobBlips());
+    }
+    if (t - lastClock > 500) {
+      lastClock = t;
+      gfxMenu.tick(mode === 'drive');
     }
     labels.focus = [drive.car.x, drive.car.y];
     labels.update(dt);

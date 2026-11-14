@@ -31,7 +31,7 @@ export class Hud {
       '<b>A D / ← →</b> lenken',
       '<b>Leertaste</b> Handbremse · <b>Shift</b> Nitro',
       '<b>R</b> zurück auf die Straße',
-      '<b>V</b> 3D-Ansicht / Draufsicht',
+      '<b>V</b> 3D-Ansicht / Draufsicht · <b>B</b> zurückschauen',
       '<b>C</b> Kamera drehen',
       '<b>T</b> Verkehr an/aus, <b>+ / −</b> Dichte',
       'Jobs: zu farbigen Markern fahren und anhalten',

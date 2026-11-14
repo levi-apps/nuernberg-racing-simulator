@@ -6,6 +6,7 @@ import { CarMesh } from './CarMesh.ts';
 import { Hud } from './Hud.ts';
 import { Input } from './Input.ts';
 import { WorldQuery } from './WorldQuery.ts';
+import { DriveFx } from './DriveFx.ts';
 import { projectOnPolyline, type WorldView } from '../world/WorldView.ts';
 import type { Lane } from '@nrs/shared';
 import type { TrafficSim } from '../traffic/TrafficSim.ts';
@@ -26,6 +27,10 @@ export class DriveController {
   /** 3D-Verfolgerkamera */
   view3D = false;
   private camHeading = 0;
+  /** Blickwinkel relativ zur Fahrtrichtung (Zurückschauen mit B) */
+  lookAngle = 0;
+  private lastHandbrake = false;
+  private lastBrake = 0;
   private camSpeed = 0;
   onView3D?: (on: boolean) => void;
   private acc = 0;
@@ -52,7 +57,9 @@ export class DriveController {
     return this.spawned;
   }
 
+  fx: DriveFx;
   constructor(private view: WorldView) {
+    this.fx = new DriveFx(view.scene);
     this.mesh = new CarMesh(this.car);
     this.query = new WorldQuery(view);
     view.scene.add(this.mesh.group, this.mesh.group3d);
@@ -147,6 +154,8 @@ export class DriveController {
     if (ready && this.spawned) {
       this.acc += Math.min(dt, 0.1);
       const inp = this.input.read();
+      this.lastHandbrake = inp.handbrake;
+      this.lastBrake = inp.brake;
       while (this.acc >= PHYS_DT) {
         this.acc -= PHYS_DT;
         const surf = this.query.surfaceAt(car.x, car.y, car.layer);
@@ -192,6 +201,10 @@ export class DriveController {
     }
 
     this.mesh.update(car);
+    if (this.spawned) this.fx.update(dt, car, this.lastHandbrake, this.lastBrake, this.view3D && this.active, v.mpp);
+    v.carPose.x = car.x;
+    v.carPose.y = car.y;
+    v.carPose.heading = car.heading;
     this.hud.setNitro(this.nitroCap > 0 ? this.nitro / this.nitroCap : null, car.boost > 0);
     this.updateInfo(dt);
     if (this.active) this.updateCamera(dt);
@@ -269,16 +282,18 @@ export class DriveController {
       this.camHeading += d * (1 - Math.exp(-dt * follow));
       this.camSpeed += (Math.min(speed, 45) - this.camSpeed) * (1 - Math.exp(-dt * 1.2));
       const z = this.zoomUser;
-      const back = (15 + this.camSpeed * 0.3) * z;
-      const up = (15 + this.camSpeed * 0.26) * z;
-      const ahead = 8 + this.camSpeed * 0.5;
-      const hx = Math.cos(this.camHeading);
-      const hy = Math.sin(this.camHeading);
+      // tiefe Verfolgerkamera: Horizont und Himmel im Bild
+      const back = (8.5 + this.camSpeed * 0.16) * z;
+      const up = (3.4 + this.camSpeed * 0.045) * z;
+      const ahead = 7 + this.camSpeed * 0.35;
+      const look = this.lookAngle + (this.input.isDown('KeyB') ? Math.PI : 0);
+      const hx = Math.cos(this.camHeading + look);
+      const hy = Math.sin(this.camHeading + look);
       v.cam3dPos.set(car.x - hx * back, car.y - hy * back, up);
-      v.cam3dTarget.set(car.x + hx * ahead, car.y + hy * ahead, 0);
+      v.cam3dTarget.set(car.x + hx * ahead, car.y + hy * ahead, 1.2);
       // Kachelauswahl um einen Punkt vor dem Auto; Maßstab für Detailstufen
-      v.cx = car.x + hx * (ahead + 60);
-      v.cy = car.y + hy * (ahead + 60);
+      v.cx = car.x + hx * v.radius3d * 0.45;
+      v.cy = car.y + hy * v.radius3d * 0.45;
       v.mpp = 0.12;
       v.rot = this.camHeading;
       return;

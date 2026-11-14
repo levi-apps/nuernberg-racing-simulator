@@ -20,6 +20,8 @@ import { FillBuilder, LineBuilder, setSlotColor } from './geometry.ts';
 import { MATERIALS, ORDER, RL_MAIN, RL_MINI, TileView, type LayerName } from './TileView.ts';
 import { AREA_COLORS, AREA_PATTERN, BACKGROUND, OVERVIEW_COLORS, TURN_COLORS } from './style.ts';
 import { Pat, shared, surfaceMat } from './materials.ts';
+import { Graphics } from './Graphics.ts';
+import { setLit } from './litMaterials.ts';
 
 /** Ab dieser Auflösung (m pro Pixel) werden Kacheln geladen, darüber nur die Übersicht. */
 const TILE_MPP = 2.6;
@@ -103,13 +105,23 @@ export class WorldView {
     this.cam3d.up.set(0, 0, 1);
     this.miniCamera.layers.set(0);
     this.miniCamera.layers.enable(RL_MINI);
-    // Licht für die 3D-Fahrzeuge (Lambert); alles andere ist vorberechnet beleuchtet
-    const hemi = new THREE.HemisphereLight(0xffffff, 0x8a8a80, 2.2);
-    hemi.position.set(0, 0, 1);
-    const sun = new THREE.DirectionalLight(0xfff4e0, 2.2);
-    sun.position.set(-60, -60, 90);
-    this.scene.add(hemi, sun);
+    this.gfx = new Graphics(this.renderer, this.scene, this.cam3d);
+    // Boden bis zum Horizont (nur 3D), damit hinter den geladenen Kacheln kein Loch ist
+    const gm = new THREE.MeshStandardMaterial({ color: 0x8f8b78, roughness: 1, transparent: true, depthTest: false, depthWrite: false });
+    this.horizonGround = new THREE.Mesh(new THREE.CircleGeometry(4000, 48), gm);
+    this.horizonGround.renderOrder = -1;
+    this.horizonGround.frustumCulled = false;
+    this.horizonGround.layers.set(RL_MAIN);
+    this.horizonGround.position.z = -0.2;
+    this.horizonGround.receiveShadow = true;
+    this.horizonGround.visible = false;
+    this.scene.add(this.horizonGround);
   }
+  readonly gfx: Graphics;
+  private horizonGround: THREE.Mesh;
+  /** Position des Spielerautos (für Scheinwerfer und Schatten) */
+  carPose = { x: 0, y: 0, heading: 0 };
+  private lastRender = performance.now();
 
   /** Welt -> Bildschirmpixel (CSS); hinter der Kamera: weit außerhalb */
   toScreen(x: number, y: number, z = 0): [number, number] {
@@ -154,13 +166,15 @@ export class WorldView {
       dims.push(v.dim);
       v.group.visible = true;
       if (v.dim !== '2d') {
-        v.dim = '2d';
+        v.setDim('2d', false);
         this.applyLayers(v);
       }
     }
     const ovVis = this.overview.visible;
     this.overview.visible = true;
     const r = this.renderer;
+    this.gfx.reset2D();
+    r.setRenderTarget(null);
     r.setScissorTest(true);
     r.setScissor(rx, ry, rw, rh);
     r.setViewport(rx, ry, rw, rh);
@@ -174,7 +188,7 @@ export class WorldView {
     let i = 0;
     for (const v of this.views.values()) {
       if (v.dim !== dims[i]) {
-        v.dim = dims[i];
+        v.setDim(dims[i], true);
         this.applyLayers(v);
       }
       v.group.visible = vis[i++];
@@ -231,6 +245,7 @@ export class WorldView {
 
   resize(): void {
     this.renderer.setSize(this.canvas.clientWidth, this.canvas.clientHeight, false);
+    this.gfx?.resize();
   }
 
   /** Richtungen "rechts" und "oben" des Bildschirms in Weltkoordinaten */
@@ -338,7 +353,7 @@ export class WorldView {
         if (visible.has(k)) {
           v.group.visible = true;
           if (in3d) v.ensure3D();
-          v.dim = dim;
+          v.setDim(dim, true);
           this.applyLayers(v);
         }
       } else if (!this.loading.has(k) && this.loading.size < 6) void this.load(k);
@@ -422,7 +437,12 @@ export class WorldView {
     this.camera.far = 1000;
     this.camera.updateProjectionMatrix();
     const in3d = this.use3d && this.mode === 'drive';
+    const now = performance.now();
+    const dt = Math.min(0.1, (now - this.lastRender) / 1000);
+    this.lastRender = now;
     if (in3d) {
+      this.radius3d = this.gfx.spec.radius;
+      this.gfx.update(dt);
       this.cam3d.aspect = w / Math.max(1, h);
       this.cam3d.position.copy(this.cam3dPos);
       this.cam3d.lookAt(this.cam3dTarget);
@@ -433,8 +453,24 @@ export class WorldView {
     if (this.frame % 6 === 0) this.updateSignals();
     shared.uMpp.value = this.mpp;
     shared.uTime.value = this.time;
+    if (in3d) {
+      // Laternen der sichtbaren Kacheln, Schatten und Scheinwerfer nachführen
+      const lamps: Array<[number, number, number]> = [];
+      for (const v of this.views.values()) if (v.group.visible) for (const l of v.streetLamps) lamps.push(l);
+      this.gfx.place(this.cam3dTarget, lamps, this.carPose);
+      this.horizonGround.position.x = this.cam3dPos.x;
+      this.horizonGround.position.y = this.cam3dPos.y;
+      this.horizonGround.visible = true;
+      for (const o of this.bigAreas.children) setLit(o, true);
+      this.gfx.render3D();
+      for (const o of this.bigAreas.children) setLit(o, false);
+      this.horizonGround.visible = false;
+      return;
+    }
+    this.gfx.reset2D();
+    this.renderer.setRenderTarget(null);
     this.renderer.clear();
-    this.renderer.render(this.scene, in3d ? this.cam3d : this.camera);
+    this.renderer.render(this.scene, this.camera);
   }
 
   private updateSignals(): void {

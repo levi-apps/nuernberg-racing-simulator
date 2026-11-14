@@ -7,6 +7,7 @@ import type { Building, LaneControl, Tile } from '@nrs/shared';
 import { FillBuilder, LineBuilder, MarkerBuilder, toM } from './geometry.ts';
 import { Pat, SHADOW_DIR, SHADOW_MAT, surfaceMat, TO_SUN } from './materials.ts';
 import { buildTile3D } from './Tile3D.ts';
+import { setLit } from './litMaterials.ts';
 import {
   AREA_COLORS,
   AREA_PATTERN,
@@ -134,6 +135,9 @@ export class TileView {
   /** aktuelle Darstellung: Draufsicht oder 3D */
   dim: Dim = '2d';
   private built3d = false;
+  /** Köpfe der Straßenlaternen (nach ensure3D) */
+  streetLamps: Array<[number, number, number]> = [];
+  private litOn = false;
 
   constructor(public tile: Tile) {
     this.build();
@@ -144,6 +148,7 @@ export class TileView {
     obj.renderOrder = order;
     obj.frustumCulled = false;
     if (dim) obj.userData.dim = dim;
+    if (layer === 'signals' || layer === 'signalStops' || layer === 'lanes' || layer === 'connectors' || layer === 'controls' || layer === 'grid') obj.userData.unlit = true;
     if (!MINIMAP_LAYERS.has(layer)) obj.layers.set(RL_MAIN);
     this.group.add(obj);
     const l = this.layers.get(layer) ?? [];
@@ -161,6 +166,7 @@ export class TileView {
     this.built3d = true;
     const t3 = buildTile3D(this.tile);
     for (const o of t3.objects) this.add(o.userData.layer as LayerName, o, o.renderOrder, '3d');
+    this.streetLamps = t3.streetLamps;
     if (t3.lampAttr) this.signalGroups.push({ attr: t3.lampAttr, slots: t3.lampSlots, palette: LAMP });
   }
 
@@ -347,7 +353,7 @@ export class TileView {
     if (!glow.empty) {
       const g = glow.build();
       this.signalGroups.push({ attr: g.getAttribute('color') as THREE.BufferAttribute, slots: glowSlots, palette: LAMP });
-      this.add('signals', new THREE.Mesh(g, MATERIALS.glow), ORDER.signalGlow);
+      this.add('signals', new THREE.Mesh(g, MATERIALS.glow), ORDER.signalGlow, '2d');
     }
 
     // ---------------------------------------------------------------- Debug-Ebenen
@@ -392,6 +398,15 @@ export class TileView {
     const y0 = t.ty * s;
     grid.add([x0, y0, x0 + s, y0, x0 + s, y0 + s, x0, y0 + s, x0, y0], 0xff00ff);
     this.add('grid', new THREE.LineSegments(grid.build(), MATERIALS.lineSoft), ORDER.grid);
+  }
+
+  /** Darstellung wechseln: in 3D beleuchtete Materialien für den Boden */
+  setDim(d: Dim, lit: boolean): void {
+    this.dim = d;
+    const on = d === '3d' && lit;
+    if (on === this.litOn) return;
+    this.litOn = on;
+    for (const o of this.group.children) setLit(o, on);
   }
 
   setLayerVisible(layer: LayerName, visible: boolean) {

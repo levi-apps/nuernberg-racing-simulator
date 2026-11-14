@@ -269,6 +269,25 @@ export class MarkerBuilder {
     return this.poly(pts, color, z);
   }
 
+  /** senkrechte Scheibe (zeigt in Richtung (dx, dy)), z.B. Ampellampe */
+  vdisc(x: number, y: number, z: number, r: number, color: number, dx: number, dy: number): number {
+    tmp.setHex(color);
+    const start = this.col.length;
+    const ux = -dy;
+    const uy = dx;
+    const n = 10;
+    for (let i = 0; i < n; i++) {
+      const a0 = (i / n) * Math.PI * 2;
+      const a1 = ((i + 1) / n) * Math.PI * 2;
+      for (const [c, s] of [[0, 0], [Math.cos(a0), Math.sin(a0)], [Math.cos(a1), Math.sin(a1)]]) {
+        this.pos.push(x + ux * c * r, y + uy * c * r, z + s * r);
+        this.col.push(tmp.r, tmp.g, tmp.b);
+      }
+    }
+    this.slots.push({ start, count: n * 3 });
+    return this.slots.length - 1;
+  }
+
   private poly(pts: Array<[number, number]>, color: number, z: number): number {
     tmp.setHex(color);
     const start = this.col.length;

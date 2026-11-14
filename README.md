@@ -26,7 +26,8 @@ npm run dev             # Spiel unter http://localhost:5173
 | A, D / ←, → | lenken |
 | Leertaste | Handbremse (driften) |
 | R | zurück auf die nächste Straße |
-| V | 3D-Ansicht (Verfolgerkamera) ↔ Draufsicht |
+| V | 3D-Ansicht (Verfolgerkamera, Standard) ↔ Draufsicht |
+| B | zurückschauen (3D) |
 | C | Kamera: Norden oben ↔ dreht mit dem Auto (Draufsicht) |
 | G | Garage / Autohaus (Autos wechseln, lackieren, kaufen) |
 | X | Job abbrechen bzw. Navigation beenden |
@@ -61,16 +62,28 @@ Die Welt wird als realistische Draufsicht gezeichnet. Alle Texturen sind prozedu
 - **Bäume:** Einzelbäume und Baumreihen aus OSM mit Kronen und Schatten. Wälder, Rasen und Wasser haben eigene Muster, das Wasser bewegt sich langsam.
 - **Ampeln:** Mast am Fahrbahnrand, bei breiten Zufahrten mit Ausleger über die Spuren, leuchtende Lampe mit Schein auf der Fahrbahn.
 
-### 3D-Ansicht (Taste V, Versuch)
+### 3D-Ansicht (Standard, Taste V wechselt zur Draufsicht)
 
-Die Kamera folgt dem Auto schräg von hinten oben. Bei höherem Tempo steigt sie höher und schaut weiter voraus. Die Auswahl bleibt im Browser gespeichert. In 3D bekommen die Kacheln eigene Körper, die erst beim ersten Wechsel erzeugt werden:
+Die Kamera folgt dem Auto tief von hinten, mit Horizont und Himmel im Bild. B schaut zurück. Die Auswahl bleibt im Browser gespeichert. In 3D bekommen die Kacheln eigene Körper, die erst beim ersten Wechsel erzeugt werden.
 
-- **Gebäude:** Wände in OSM-Höhe mit Fensterreihen (Putz-, Sandstein- und Betontöne). Die Dächer sitzen auf echter Höhe, Sattel- und Walmdächer mit First.
-- **Bäume:** Stamm und Krone.
-- **Ampeln:** auf Masten, bei breiten Zufahrten mit Ausleger, und mit leuchtender Lampe.
-- **Fahrzeuge:** Körper aus Unterbau, Kabine und Dach, mit Bremslichtern. KI-Autos hinter Gebäuden sind verdeckt.
+- **Licht:** Sonne mit echten Schatten (Gebäude, Bäume, Masten, Autos) und Himmelslicht. Der Himmel spiegelt sich in Lack, Fenstern und Wasser. Dunst in der Ferne.
+- **Tag und Nacht:** Die Sonne geht um 6 Uhr im Osten auf und um 18 Uhr im Westen unter. Abends und nachts gibt es Sterne und Mond, einen Teil der Fenster beleuchtet, leuchtende Läden, Straßenlaternen mit echtem Licht in der Nähe, Scheinwerfer und Rückleuchten. Standard: 1 Spieltag = 24 Minuten.
+- **Gebäude:** Fassaden mit Fensterrahmen, Fensterbänken, Gesimsen und teils Ladenzonen im Erdgeschoss. Dazu Ziegeldächer mit Reihen und Verwitterung, Schornsteine, Flachdächer mit Attika und Aufbauten.
+- **Straßen:** Asphalt mit Ausbesserungen, Pflaster, Markierungen. Straßenlaternen alle ~30 m entlang der Bordsteine. Ampeln mit Lampe zum Verkehr.
+- **Bäume:** Kronen aus mehreren Laubballen.
+- **Autos:** Gerundete Karosserien je Typ mit Radhäusern, Glaskabine, Säulen, Felgen mit Speichen, Spiegeln, Kennzeichen, Scheinwerfern und Rückleuchten. Sportwagen haben Heckflügel, Abschleppwagen Kran und Rundumleuchte. Der eigene Wagen hat Klarlack, und die Räder drehen und lenken. Die KI-Fahrzeuge nutzen dieselben Modelle in vier Pkw-Varianten plus Transporter und Bus.
+- **Effekte:** Reifenspuren und Rauch beim Driften, Handbremsen, Vollbremsen und Nitro-Burnout. Leuchteffekte (Bloom) und Umgebungsverdeckung (GTAO).
 
-Straßen, Markierungen und Schatten bleiben flach auf dem Boden. Straßennamen erscheinen in 3D nur im Umkreis von etwa 110 m. Die Minikarte zeigt weiter die Draufsicht und dreht sich mit der Kamera.
+**Grafik-Einstellungen:** Das Zahnrad oben rechts zeigt die Uhrzeit im Spiel.
+
+| Stufe | Schatten | Umgebungsverdeckung | Leuchten | Kantenglättung | Laternenlichter | Sichtweite |
+|---|---|---|---|---|---|---|
+| Niedrig | aufgemalt | – | – | – | – | 170 m |
+| Mittel | 1024 px | – | ja | FXAA | 4 | 220 m |
+| Hoch (Standard) | 2048 px | ja | ja | SMAA | 8 | 280 m |
+| Ultra | 4096 px | ja | ja | SMAA | 12 | 340 m |
+
+Dort lassen sich auch die Tageszeit (Regler oder Morgen/Mittag/Abend/Nacht), das Anhalten der Zeit und die Tageslänge einstellen. Auf Handys startet das Spiel mit „Mittel“. Die Minikarte und die große Karte (K) bleiben die unbeleuchtete Draufsicht.
 
 ## Jobs, Geld und Autos
 

@@ -32,6 +32,10 @@ export class Input {
     this.pressed.clear();
   }
 
+  isDown(code: string): boolean {
+    return this.enabled && this.keys.has(code);
+  }
+
   /** Nitro: Shift oder Gamepad RB */
   get nitro(): boolean {
     if (!this.enabled) return false;
