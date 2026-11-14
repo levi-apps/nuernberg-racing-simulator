@@ -20,6 +20,8 @@ export const lit = {
 export const PAT_ROOF_FLAT = 10;
 export const PAT_LAMP = 11;
 export const PAT_SOLAR = 12;
+/** Gärten/Höfe: Rasen, Beete, gepflasterte Flächen (Boden ohne eigene Fläche) */
+export const PAT_YARD = 13;
 
 const ROUGH: Record<number, number> = {
   [Pat.Plain]: 0.8,
@@ -35,6 +37,7 @@ const ROUGH: Record<number, number> = {
   [PAT_ROOF_FLAT]: 0.92,
   [PAT_LAMP]: 0.5,
   [PAT_SOLAR]: 0.2,
+  [PAT_YARD]: 0.92,
 };
 
 const COMMON = /* glsl */ `
@@ -89,9 +92,30 @@ float waterH(vec2 p) {
   return h;
 }
 
+// Gärten und Höfe: Rasen mit Beeten, Wegen und gepflasterten Stellen
+vec3 yard(vec2 w, vec3 tint) {
+  float n = fbm(w * 0.25);
+  float m = fbm(w * 0.06 + 31.0);
+  float fine = vnoise(w * 3.0) * detail(0.3);
+  vec3 lawn = mix(vec3(0.30, 0.43, 0.17), vec3(0.45, 0.55, 0.24), n) * (0.9 + 0.2 * fine);
+  // trockene Stellen
+  lawn = mix(lawn, vec3(0.55, 0.53, 0.32), 0.35 * smoothstep(0.55, 0.8, fbm(w * 0.4 + 5.0)));
+  vec3 paved = mix(vec3(0.58, 0.56, 0.52), tint, 0.4) * (0.9 + 0.15 * fine);
+  vec3 soil = vec3(0.33, 0.26, 0.19) * (0.85 + 0.3 * fine);
+  float pave = smoothstep(0.58, 0.62, m);
+  float bed = smoothstep(0.66, 0.7, fbm(w * 0.5 + 77.0)) * (1.0 - pave);
+  vec3 c = mix(lawn, paved, pave);
+  return mix(c, soil, bed * 0.8);
+}
+
 void applyPattern(inout vec3 c) {
   vec2 w = vPW;
   pxSize = length(fwidth(w)) + length(fwidth(vPUv)) * 0.5;
+  if (uPat == 13) {
+    c = yard(w, c);
+    gPatRough = 0.92;
+    return;
+  }
   if (uPat == 1) {
     float grain = vnoise(w * 9.0) * 0.5 + vnoise(w * 31.0) * 0.5;
     float big = fbm(w * 0.06);
@@ -107,6 +131,12 @@ void applyPattern(inout vec3 c) {
     float j = 1.0 - smoothstep(0.0, 0.07, min(min(f.x, 1.0 - f.x), min(f.y, 1.0 - f.y)));
     c *= 1.0 - 0.16 * j * detail(0.5);
     c *= 0.94 + 0.12 * vnoise(floor(g) * 0.73) * detail(0.5) + 0.06 * (fbm(w * 0.1) - 0.5);
+    // Pflaster etwas dunkler und wärmer als in der Draufsicht (sonst wirkt es bei Sonne weiß)
+    c *= vec3(0.84, 0.82, 0.79);
+    c = mix(c, c * vec3(0.8, 0.78, 0.74), smoothstep(0.5, 0.75, fbm(w * 0.2 + 41.0)) * 0.6);
+  } else if (uPat == 3 && max(c.r, max(c.g, c.b)) - min(c.r, min(c.g, c.b)) < 0.17) {
+    // Wohngebiet (blasse Fläche): Gärten statt Einheitsgrün
+    c = yard(w, c);
   } else if (uPat == 3) {
     float n = fbm(w * 0.22);
     c *= 0.8 + 0.38 * n;
@@ -262,7 +292,7 @@ void applyPattern(inout vec3 c) {
     gPatRough = 0.18;
   } else if (uPat == 11) {
     // Laternenkopf: nachts hell
-    gPatEmis = vec3(1.0, 0.82, 0.55) * uNight * 6.0;
+    gPatEmis = vec3(1.0, 0.82, 0.55) * uNight * 3.5;
   }
 }
 

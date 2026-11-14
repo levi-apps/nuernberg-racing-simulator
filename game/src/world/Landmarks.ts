@@ -32,7 +32,9 @@ type Kind =
   | { k: 'dome' }
   | { k: 'round'; h: number; roof: number; slim?: boolean }
   | { k: 'square'; roofScale: number }
-  | { k: 'tv' };
+  | { k: 'tv' }
+  | { k: 'single'; side: number; h: number; spireFrom: number; onion?: boolean }
+  | { k: 'schloss'; tower: number };
 
 const LM: Record<number, Kind> = {
   144721691: { k: 'twin', side: 9.5, h: 81, spireFrom: 52, gap: 15 }, // St. Lorenz
@@ -52,11 +54,20 @@ const LM: Record<number, Kind> = {
   32547919: { k: 'square', roofScale: 1.5 }, // Alcibiades-Turm
   32477860: { k: 'square', roofScale: 1.5 },
   23283521: { k: 'tv' }, // Fernmeldeturm
+  // Roth
+  123723273: { k: 'single', side: 7.5, h: 54, spireFrom: 34 }, // Evangelische Stadtkirche
+  162059072: { k: 'single', side: 6, h: 42, spireFrom: 28 }, // Kath. Kirche Maria Aufnahme in den Himmel
+  1000001691009: { k: 'schloss', tower: 4.2 }, // Schloss Ratibor
 };
 
 /** Altstadt (innerhalb der Stadtmauer, als Ellipse angenähert) */
 export function inAltstadt(x: number, y: number): boolean {
-  return (x / 790) ** 2 + ((y + 90) / 640) ** 2 < 1;
+  return (x / 790) ** 2 + ((y + 90) / 640) ** 2 < 1 || inRothAltstadt(x, y);
+}
+
+/** Altstadt von Roth (um Marktplatz, Stadtkirche und Schloss Ratibor) */
+export function inRothAltstadt(x: number, y: number): boolean {
+  return ((x - 1640) / 300) ** 2 + ((y + 23110) / 200) ** 2 < 1;
 }
 
 export interface LandmarkInfo {
@@ -77,6 +88,10 @@ export function landmarkInfo(b: Building, cx: number, cy: number): LandmarkInfo 
     return null;
   }
   switch (lm.k) {
+    case 'single':
+      return { replace: false, roofScale: 0.9, style: STYLE_SAND + 2, roofColor: TILE_RED };
+    case 'schloss':
+      return { replace: false, roofScale: 0.75, style: STYLE_SAND + 3, roofColor: TILE_RED };
     case 'twin':
     case 'gable':
     case 'dome':
@@ -151,7 +166,12 @@ export function buildLandmark(b: Building, r: RoofInfo, top: number, B: Builders
         prism(B.walls, tx, ty, lm.side * 0.46, lm.spireFrom + 0.7, lm.spireFrom + 9, sand, 8, ang + Math.PI / 8, STYLE_TOWER * 1000);
         spire(B.roofs, tx, ty, lm.side * 0.5, lm.spireFrom + 9, lm.h, SLATE, 8, ang + Math.PI / 8);
         // Ecktürmchen
-        for (const [u, v] of [[1, 1], [1, -1], [-1, 1], [-1, -1]]) {
+        for (const [u, v] of [
+          [1, 1],
+          [1, -1],
+          [-1, 1],
+          [-1, -1],
+        ]) {
           const ex = tx + (ax * u + px * v) * lm.side * 0.48;
           const ey = ty + (ay * u + py * v) * lm.side * 0.48;
           spire(B.roofs, ex, ey, 0.55, lm.spireFrom + 0.7, lm.spireFrom + 6, SLATE, 6);
@@ -181,6 +201,50 @@ export function buildLandmark(b: Building, r: RoofInfo, top: number, B: Builders
       cylinder(B.solid, wx + ax * 0.9, wy + ay * 0.9, 1.25, top + 3.6, top + 3.7, 0xe9c25a, 20, 1);
       box(B.solid, wx + ax * 1.4, wy + ay * 1.4, 7, 12, 2.2, 3.4, ang, 0xc89a7c);
       spire(B.roofs, wx + ax * 1.4, wy + ay * 1.4, 1.8, 12, 15.5, SLATE, 6);
+      break;
+    }
+    case 'single': {
+      // ein Westturm mit Achteckgeschoss und Spitzhelm (oder Zwiebel)
+      const tx = wx - ax * lm.side * 0.45;
+      const ty = wy - ay * lm.side * 0.45;
+      towerBlock(B.walls, tx, ty, lm.side, ang, 0, lm.spireFrom, sand, STYLE_TOWER);
+      box(B.solid, tx, ty, lm.spireFrom, lm.spireFrom + 0.6, lm.side + 0.8, lm.side + 0.8, ang, 0xa77a62);
+      prism(B.walls, tx, ty, lm.side * 0.45, lm.spireFrom + 0.6, lm.spireFrom + 7, 0xe9e1cf, 8, ang + Math.PI / 8, STYLE_TOWER * 1000);
+      // Uhr auf allen Seiten
+      for (let i = 0; i < 4; i++) {
+        const a = ang + (i * Math.PI) / 2;
+        cylinder(B.solid, tx + Math.cos(a) * (lm.side * 0.5 + 0.05), ty + Math.sin(a) * (lm.side * 0.5 + 0.05), 1.1, lm.spireFrom - 4, lm.spireFrom - 3.9, 0xe9c25a, 16, 1);
+      }
+      if (lm.onion) {
+        ellipsoid(B.roofs, tx, ty, lm.spireFrom + 9, lm.side * 0.5, 3, 0x3f6b55);
+        spire(B.roofs, tx, ty, 0.6, lm.spireFrom + 11, lm.h, 0x3f6b55, 8);
+      } else spire(B.roofs, tx, ty, lm.side * 0.5, lm.spireFrom + 7, lm.h, SLATE, 8, ang + Math.PI / 8);
+      spire(B.solid, tx, ty, 0.12, lm.h, lm.h + 2.5, 0xe0b84c, 4);
+      break;
+    }
+    case 'schloss': {
+      // Renaissance-Schloss: runde Ecktürme mit Spitzdach an den Ecken des Grundrisses
+      let minA = Infinity;
+      let maxA = -Infinity;
+      let minB = Infinity;
+      let maxB = -Infinity;
+      for (const [x, y] of pts) {
+        const a = (x - cx) * ax + (y - cy) * ay;
+        const bb = (x - cx) * px + (y - cy) * py;
+        minA = Math.min(minA, a);
+        maxA = Math.max(maxA, a);
+        minB = Math.min(minB, bb);
+        maxB = Math.max(maxB, bb);
+      }
+      for (const a of [minA, maxA])
+        for (const bb of [minB, maxB]) {
+          const tx = cx + ax * a + px * bb;
+          const ty = cy + ay * a + py * bb;
+          prism(B.walls, tx, ty, lm.tower, 0, top + 5, SANDSTONE[3], 20, 0, STYLE_TOWER * 1000);
+          cylinder(B.solid, tx, ty, lm.tower + 0.3, top + 4.6, top + 5, 0x9d7058, 20, 1);
+          spire(B.roofs, tx, ty, lm.tower + 0.5, top + 5, top + 5 + lm.tower * 2.6, TILE_RED, 20);
+          spire(B.solid, tx, ty, 0.1, top + 5 + lm.tower * 2.6, top + 7.5 + lm.tower * 2.6, 0xe0b84c, 4);
+        }
       break;
     }
     case 'dome': {

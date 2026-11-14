@@ -286,7 +286,7 @@ export function adMaterial(): THREE.MeshStandardMaterial {
     sh.uniforms.uNight = lit.uNight;
     sh.fragmentShader = sh.fragmentShader
       .replace('#include <common>', '#include <common>\nuniform float uNight;')
-      .replace('#include <emissivemap_fragment>', '#include <emissivemap_fragment>\ntotalEmissiveRadiance *= 1.0 + uNight * 4.0;');
+      .replace('#include <emissivemap_fragment>', '#include <emissivemap_fragment>\ntotalEmissiveRadiance *= 1.0 + uNight * 2.0;');
   };
   return material;
 }

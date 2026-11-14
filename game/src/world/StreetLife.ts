@@ -14,7 +14,7 @@ import { adMaterial, AD } from './Ads.ts';
 import { inAltstadt } from './Landmarks.ts';
 import { RL_MAIN } from './TileView.ts';
 
-type Kind = 'bollard' | 'bin' | 'bench' | 'sign_stop' | 'sign_yield' | 'sign_prio' | 'sign_30' | 'sign_50' | 'shelter' | `car:${string}` | `tree:${number}`;
+type Kind = 'hedge' | 'bollard' | 'bin' | 'bench' | 'sign_stop' | 'sign_yield' | 'sign_prio' | 'sign_30' | 'sign_50' | 'shelter' | `car:${string}` | `tree:${number}`;
 
 interface Prop {
   kind: Kind;
@@ -28,6 +28,9 @@ interface Prop {
   heavy: boolean;
   knocked?: boolean;
   color?: number;
+  /** Streckung (Hecken): Länge und Höhe relativ zu s */
+  sx?: number;
+  sz?: number;
 }
 
 interface Debris {
@@ -62,6 +65,20 @@ function inRing(ring: number[], x: number, y: number): boolean {
     if (yi > y !== yj > y && x < ((xj - xi) * (y - yi)) / (yj - yi) + xi) inside = !inside;
   }
   return inside;
+}
+
+/** liegt der Punkt (m) näher als r an der Linie (dm)? */
+function nearLine(p: number[], x: number, y: number, r: number): boolean {
+  for (let i = 2; i < p.length; i += 2) {
+    const ax = p[i - 2] / 10;
+    const ay = p[i - 1] / 10;
+    const dx = p[i] / 10 - ax;
+    const dy = p[i + 1] / 10 - ay;
+    const l2 = dx * dx + dy * dy || 1;
+    const t = Math.max(0, Math.min(1, ((x - ax) * dx + (y - ay) * dy) / l2));
+    if (Math.hypot(ax + dx * t - x, ay + dy * t - y) < r) return true;
+  }
+  return false;
 }
 
 /** Abstand Punkt (m) zur Spur-Mittellinie (dm) */
@@ -219,6 +236,22 @@ function buildPropModels(): Map<string, PropModel> {
     ]),
     mats: [std(0x3a3d42), std(0xe8e8e8, { emissive: 0x444444 })],
   });
+  // geschnittene Hecke: leicht unregelmäßiger Quader (1 m lang, 0.85 m breit, 1 m hoch)
+  {
+    const g = new THREE.BoxGeometry(1, 0.85, 1, 8, 4, 5).translate(0, 0, 0.5);
+    const pos = g.getAttribute('position') as THREE.BufferAttribute;
+    for (let i = 0; i < pos.count; i++) {
+      const x = pos.getX(i);
+      const y = pos.getY(i);
+      const z = pos.getZ(i);
+      if (z < 0.01) continue;
+      const n = Math.sin(x * 23.1 + y * 17.7 + z * 11.3) * 0.5 + Math.sin(x * 7.3 - z * 13.1) * 0.5;
+      pos.setXYZ(i, x * (Math.abs(x) > 0.49 ? 1 : 1), y + Math.sign(y) * n * 0.035, z + (z > 0.99 ? n * 0.05 : 0));
+    }
+    const ng = g.toNonIndexed();
+    ng.computeVertexNormals();
+    m.set('hedge', { geo: ng, mats: std(0x2f5a22, { roughness: 0.95, flatShading: true }) });
+  }
   m.set('bin', {
     geo: grouped([
       [zUp(new THREE.CylinderGeometry(0.24, 0.21, 0.8, 12)).translate(0, 0, 0.5), 0],
@@ -573,11 +606,16 @@ export class StreetLife {
           const x = minX + hash(a.id * 977 + k * 2) * (maxX - minX);
           const y = minY + hash(a.id * 977 + k * 2 + 1) * (maxY - minY);
           if (!inTile(x, y) || !inRing(o, x * 10, y * 10)) continue;
+          if (t.surfaces.some((sf) => inRing(sf.sw ?? sf.ring, x * 10, y * 10))) continue;
+          if (t.lines.some((l) => (l.k === 'footway' || l.k === 'path' || l.k === 'cycleway') && nearLine(l.pts, x, y, 1.6))) continue;
           const bush = models.trees.length - 1 - (k % 2);
           out.push({ kind: `tree:${bush}`, x, y, h: hash(k) * 6.28, s: 0.9 + hash(k + 9) * 1.2, hl: 0.4, hw: 0.4, heavy: false });
         }
       }
     }
+
+    // Vorgärten: Hecken, Büsche und Bäume hinter dem Gehweg von Wohnstraßen
+    if (models.ready && models.trees.length >= 6) this.gardens(t, out, inTile);
 
     // Straßenbahnlinien sammeln
     for (const l of t.lines) {
@@ -588,6 +626,110 @@ export class StreetLife {
     }
     this.props.set(key, out);
     this.dirty = true;
+  }
+
+  private gardens(t: Tile, out: Prop[], inTile: (x: number, y: number) => boolean): void {
+    const GARDEN_CLS = new Set(['residential', 'living_street', 'unclassified', 'tertiary']);
+    // Gebäude als Rechteck + Ring (dm) für den Punkttest
+    const bl = t.buildings.map((b) => {
+      let x0 = Infinity;
+      let y0 = Infinity;
+      let x1 = -Infinity;
+      let y1 = -Infinity;
+      for (let i = 0; i < b.outer.length; i += 2) {
+        x0 = Math.min(x0, b.outer[i]);
+        x1 = Math.max(x1, b.outer[i]);
+        y0 = Math.min(y0, b.outer[i + 1]);
+        y1 = Math.max(y1, b.outer[i + 1]);
+      }
+      return { x0: x0 - 15, y0: y0 - 15, x1: x1 + 15, y1: y1 + 15, ring: b.outer };
+    });
+    const inBuilding = (x: number, y: number) => {
+      const X = x * 10;
+      const Y = y * 10;
+      for (const b of bl) if (X > b.x0 && X < b.x1 && Y > b.y0 && Y < b.y1 && inRing(b.ring, X, Y)) return true;
+      // Abstand zu Wänden grob: Rechteck mit Rand
+      return false;
+    };
+    const nearBuilding = (x: number, y: number, r: number) => {
+      const X = x * 10;
+      const Y = y * 10;
+      const R = r * 10;
+      for (const b of bl)
+        if (
+          X > b.x0 - R &&
+          X < b.x1 + R &&
+          Y > b.y0 - R &&
+          Y < b.y1 + R &&
+          (inRing(b.ring, X, Y) || inRing(b.ring, X + R, Y) || inRing(b.ring, X - R, Y) || inRing(b.ring, X, Y + R) || inRing(b.ring, X, Y - R))
+        )
+          return true;
+      return false;
+    };
+    const roads = t.surfaces;
+    const onRoad = (x: number, y: number) => {
+      const X = x * 10;
+      const Y = y * 10;
+      for (const s of roads) if (inRing(s.sw ?? s.ring, X, Y)) return true;
+      return false;
+    };
+    const areaOk = (x: number, y: number) => {
+      for (const a of t.areas) if ((a.k === 'parking' || a.k === 'water' || a.k === 'railway' || a.k === 'pedestrian') && inRing(a.outer, x * 10, y * 10)) return false;
+      return true;
+    };
+    const nTree = models.trees.length - 2;
+    for (const sfc of t.surfaces) {
+      if (sfc.k !== 'seg' || sfc.layer !== 0 || !GARDEN_CLS.has(sfc.cls)) continue;
+      const ring = sfc.sw ?? sfc.ring;
+      const n = ring.length / 2;
+      for (let i = 0; i < n; i++) {
+        const ax = ring[i * 2] / 10;
+        const ay = ring[i * 2 + 1] / 10;
+        const bx = ring[((i + 1) % n) * 2] / 10;
+        const by = ring[((i + 1) % n) * 2 + 1] / 10;
+        const len = Math.hypot(bx - ax, by - ay);
+        if (len < 4) continue;
+        const dx = (bx - ax) / len;
+        const dy = (by - ay) / len;
+        // Normale nach außen
+        let nx = -dy;
+        let ny = dx;
+        if (inRing(ring, ((ax + bx) / 2 + nx * 0.6) * 10, ((ay + by) / 2 + ny * 0.6) * 10)) {
+          nx = -nx;
+          ny = -ny;
+        }
+        const seed = sfc.id * 131 + i * 7;
+        // Art des Abschnitts: Hecke, Büsche oder Bäume
+        const style = hash(seed);
+        const step = style < 0.35 ? 2.6 : style < 0.7 ? 4.5 : 11;
+        for (let d = 1.5 + hash(seed + 1) * 2; d < len - 1.5; d += step) {
+          const px = ax + dx * d;
+          const py = ay + dy * d;
+          const r = hash(seed + Math.floor(d * 10));
+          if (style < 0.35) {
+            // Hecke: gestrecktes Buschmodell parallel zum Gehweg
+            const x = px + nx * 0.9;
+            const y = py + ny * 0.9;
+            if (!inTile(x, y) || onRoad(x, y) || nearBuilding(x, y, 0.8) || !areaOk(x, y)) continue;
+            out.push({ kind: 'hedge', x, y, h: Math.atan2(dy, dx), s: 1, sx: 2.75, sz: 1.0 + r * 0.6, hl: 1.35, hw: 0.45, heavy: false });
+          } else if (style < 0.7) {
+            if (r > 0.65) continue;
+            const off = 1.2 + r * 3;
+            const x = px + nx * off;
+            const y = py + ny * off;
+            if (!inTile(x, y) || onRoad(x, y) || nearBuilding(x, y, 0.8) || !areaOk(x, y)) continue;
+            out.push({ kind: `tree:${models.trees.length - 1 - (r < 0.3 ? 1 : 0)}`, x, y, h: r * 6.28, s: 0.9 + r * 0.9, hl: 0.4, hw: 0.4, heavy: false });
+          } else {
+            if (r > 0.6) continue;
+            const off = 2.5 + r * 3;
+            const x = px + nx * off;
+            const y = py + ny * off;
+            if (!inTile(x, y) || onRoad(x, y) || nearBuilding(x, y, 2.5) || inBuilding(x, y) || !areaOk(x, y)) continue;
+            out.push({ kind: `tree:${Math.floor(hash(seed + 99 + d) * nTree)}`, x, y, h: r * 6.28, s: 6 + r * 6, hl: 0.3, hw: 0.3, heavy: true });
+          }
+        }
+      }
+    }
   }
 
   removeTile(key: string): void {
@@ -614,7 +756,7 @@ export class StreetLife {
       if (!models.trees[i]) return null;
       geo = models.trees[i];
       mats = models.treeMats[i];
-      max = 1500;
+      max = 6000;
     } else {
       const m = this.models.get(kind);
       if (!m) return null;
@@ -664,7 +806,7 @@ export class StreetLife {
         }
         p.set(pr.x, pr.y, 0);
         q.setFromAxisAngle(z, pr.h);
-        sc.set(s, s, s);
+        sc.set(s * (pr.sx ?? 1), s, s * (pr.sz ?? 1));
         m.compose(p, q, sc);
         im.setMatrixAt(i, m);
         counts.set(pr.kind, i + 1);
@@ -715,6 +857,12 @@ export class StreetLife {
           const res = obbOverlap(car.x, car.y, car.heading, hl, hw, pr.x, pr.y, pr.h, pr.hl, pr.hw);
           if (!res) continue;
           const [nx, ny, depth] = res;
+          // tief ineinander (z. B. nach Start oder Teleport): Objekt verschwindet einfach
+          if (depth > 0.8) {
+            pr.knocked = true;
+            this.dirty = true;
+            continue;
+          }
           if (!pr.heavy && speed > 2.5) {
             // umfahren: fliegt davon, Auto wird kaum gebremst
             pr.knocked = true;

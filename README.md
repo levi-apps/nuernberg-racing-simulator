@@ -1,6 +1,6 @@
 # Nürnberg Racing Simulator
 
-Mit dem Auto durch das echte Nürnberg fahren, mit dem echten Straßennetz und echten Gebäuden, Kreuzungen und Ampeln aus OpenStreetMap. Erst in 2D aus der Vogelperspektive, später in 3D.
+Mit dem Auto durch das echte Nürnberg und das echte Roth fahren, mit dem echten Straßennetz und echten Gebäuden, Kreuzungen und Ampeln aus OpenStreetMap. In 3D (GTA-Look) oder als Draufsicht.
 
 Stand: **Schritt 4 – Aufträge (Taxi, Kurier), Navigation, Minikarte, Straßennamen, Startgebiet.** (Schritt 1: Datenpipeline und Debugansicht, Schritt 2: Fahren, Schritt 3: Ampeln und KI-Verkehr)
 
@@ -73,6 +73,15 @@ Die Kamera folgt dem Auto tief von hinten, mit Horizont und Himmel im Bild. B sc
 - **Bäume:** Kronen aus mehreren Laubballen.
 - **Autos:** Gerundete Karosserien je Typ mit Radhäusern, Glaskabine, Säulen, Felgen mit Speichen, Spiegeln, Kennzeichen, Scheinwerfern und Rückleuchten. Sportwagen haben Heckflügel, Abschleppwagen Kran und Rundumleuchte. Der eigene Wagen hat Klarlack, und die Räder drehen und lenken. Die KI-Fahrzeuge nutzen dieselben Modelle in vier Pkw-Varianten plus Transporter und Bus.
 - **Effekte:** Reifenspuren und Rauch beim Driften, Handbremsen, Vollbremsen und Nitro-Burnout. Leuchteffekte (Bloom) und Umgebungsverdeckung (GTAO).
+- **Wetter:** Wolken, Regen mit nassen, spiegelnden Straßen und Pfützen, Gewitter mit Blitzen, Schnee mit Schneedecke. Nässe und Schnee verringern die Haftung. Im Grafikmenü wählbar oder automatisch wechselnd.
+- **Kamera:** Blickfeld wächst mit dem Tempo und beim Nitro, Wackeln bei Unfällen, Bewegungsunschärfe am Bildrand, Farbkorrektur (warme Lichter, kühle Schatten), Lichtstrahlen und Linsenreflexe der Sonne.
+- **Wahrzeichen:** St. Lorenz, St. Sebald, Frauenkirche mit Ziergiebel, St. Elisabeth, Stadtmauertürme, Sinwellturm, Fernmeldeturm, Schöner Brunnen. In der Altstadt Fachwerk- und Sandsteinhäuser, Chörlein, Gauben. In Roth: Stadtkirche, katholische Kirche und Schloss Ratibor mit Ecktürmen, Fachwerk in der Altstadt.
+- **Werbung:** Überall hängt Werbung für [PokeTrade](https://poketrade.patrick-thomas.de): Plakatwände (beidseitig), Litfaßsäulen, Fassadenbanner, Leuchtreklamen auf Dächern und Plakate in Bushaltestellen. Nachts leuchten sie.
+- **Echte 3D-Modelle:** Autos, Fußgänger, Bäume, Büsche und Trümmerteile von [Kenney](https://kenney.nl) (CC0). Lack mit Klarlack, spiegelnde Scheiben und Chrom.
+- **Straßenleben:** parkende Autos am Straßenrand und auf Parkplätzen, Verkehrsschilder (Stopp, Vorfahrt, Tempo 30/50), Poller, Mülleimer, Bänke, Bushaltestellen, Fußgänger auf den Gehwegen (rennen weg, fallen um, schimpfen), rot-weiße Straßenbahnen auf den echten Gleisen. Kleine Dinge kann man umfahren, sie fliegen weg.
+- **Natur:** Vorgärten mit Rasen, Beeten, Hecken, Büschen und Bäumen; Büsche in Parks; Wasser mit bewegten Wellen.
+- **Schaden:** Dellen in der Karosserie, abfallende Teile und Stoßstangen, Glassplitter, Motorrauch ab ca. 40 % Schaden, weniger Leistung. Anzeige 🔧 am Tacho, Reparatur in jeder Tuning-Werkstatt.
+- **Nacht:** Lichthöfe und Lichtkegel an den Laternen.
 
 **Grafik-Einstellungen:** Das Zahnrad oben rechts zeigt die Uhrzeit im Spiel.
 
@@ -233,7 +242,15 @@ Objekte, die über Kachelgrenzen reichen, stehen in mehreren Kacheln mit derselb
 - Wer abseits der Straße unter eine Brücke fährt und dabei die Brückenfläche berührt, landet auf der Brücke.
 - Mauern, Zäune, Poller und Bäume sind noch keine Hindernisse, nur Gebäude.
 - Die KI wechselt keine Spuren und überholt nicht. Sehr selten überlappen sich zwei KI-Fahrzeuge kurz in einer Kreuzung.
-- Es gibt noch keine Fußgänger, Radfahrer und Straßenbahnen. Fußgängerampeln schalten trotzdem.
+- Es gibt noch keine Radfahrer. Fußgänger laufen auf den Gehwegen, halten sich aber nicht an Ampeln.
+
+## Spielwelt
+
+Die Welt besteht aus Gebieten (`regions` im Manifest): Nürnberg (OSM-Relation 62780), Roth (OSM-Relation 158556) und dem Korridor der Verbindungsstraße dazwischen (kürzester Weg über Hauptstraßen, 2 × 160 m breit). Außerhalb ist die Spielwelt zu Ende.
+
+## Lizenz der Modelle
+
+Autos, Figuren, Bäume, Büsche und Trümmerteile in `game/public/models` stammen von Kenney (www.kenney.nl) und stehen unter CC0.
 
 ## Lizenz der Kartendaten
 

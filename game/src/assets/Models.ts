@@ -184,16 +184,25 @@ function findPaintCell(geo: THREE.BufferGeometry, tex: THREE.Texture): { cell: n
 
 /** Material mit umfärbbarem Lack (Instanzfarbe oder uPaint) */
 export function paintMaterial(tex: THREE.Texture, cell: number, lum: number): THREE.MeshStandardMaterial {
-  const m = new THREE.MeshStandardMaterial({ map: tex, roughness: 0.42, metalness: 0.18, transparent: true });
+  // Klarlack, Glas und Reifen unterscheiden sich in Glanz und Spiegelung (je Farbfeld im Shader)
+  const m = new THREE.MeshPhysicalMaterial({ map: tex, roughness: 0.5, metalness: 0.1, clearcoat: 1, clearcoatRoughness: 0.08, transparent: true });
   m.userData.uPaint = { value: new THREE.Color(1, 1, 1) };
   m.userData.cell = cell;
   m.onBeforeCompile = (sh) => {
     sh.uniforms.uPaint = m.userData.uPaint;
     sh.uniforms.uPaintCell = { value: cell };
     sh.uniforms.uCellLum = { value: lum };
-    sh.fragmentShader = sh.fragmentShader.replace('#include <common>', '#include <common>\nuniform vec3 uPaint;\nuniform float uPaintCell;\nuniform float uCellLum;').replace(
-      '#include <color_fragment>',
-      `
+    sh.fragmentShader = sh.fragmentShader
+      .replace(
+        '#include <common>',
+        '#include <common>\nuniform vec3 uPaint;\nuniform float uPaintCell;\nuniform float uCellLum;\nfloat gCarRough = 0.55;\nfloat gCarMetal = 0.05;\nfloat gCoat = 0.0;',
+      )
+      .replace('#include <roughnessmap_fragment>', '#include <roughnessmap_fragment>\nroughnessFactor = gCarRough;')
+      .replace('#include <metalnessmap_fragment>', '#include <metalnessmap_fragment>\nmetalnessFactor = gCarMetal;')
+      .replace('#include <lights_physical_fragment>', '#include <lights_physical_fragment>\nmaterial.clearcoat *= gCoat;')
+      .replace(
+        '#include <color_fragment>',
+        `
         #if defined( USE_INSTANCING_COLOR ) || defined( USE_COLOR )
           vec3 paint = vColor.rgb;
         #else
@@ -202,14 +211,27 @@ export function paintMaterial(tex: THREE.Texture, cell: number, lum: number): TH
         #ifdef USE_MAP
         {
           vec2 pc = floor(clamp(vMapUv, 0.0, 0.9999) * vec2(16.0, 4.0));
+          float l = dot(diffuseColor.rgb, vec3(0.2126, 0.7152, 0.0722));
           if (uPaintCell >= 0.0 && abs(pc.x + pc.y * 16.0 - uPaintCell) < 0.5) {
-            float l = dot(diffuseColor.rgb, vec3(0.2126, 0.7152, 0.0722));
             diffuseColor.rgb = paint * clamp(l / uCellLum, 0.4, 1.6);
+            gCarRough = 0.28;
+            gCarMetal = 0.45;
+            gCoat = 1.0;
+          } else if (l < 0.09 && diffuseColor.b >= diffuseColor.r) {
+            // Scheiben: dunkel, spiegelnd
+            gCarRough = 0.04;
+            gCarMetal = 0.7;
+            gCoat = 0.6;
+          } else if (l < 0.06) {
+            gCarRough = 0.9; // Reifen, Kunststoff
+          } else if (l > 0.55 && abs(diffuseColor.r - diffuseColor.b) < 0.06) {
+            gCarRough = 0.18; // Chrom, Felgen
+            gCarMetal = 0.9;
           }
         }
         #endif
         `,
-    );
+      );
   };
   m.customProgramCacheKey = () => 'kenney-paint';
   return m;

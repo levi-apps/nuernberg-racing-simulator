@@ -21,7 +21,7 @@ import { MATERIALS, ORDER, RL_MAIN, RL_MINI, TileView, type LayerName } from './
 import { AREA_COLORS, AREA_PATTERN, BACKGROUND, OVERVIEW_COLORS, TURN_COLORS } from './style.ts';
 import { Pat, shared, surfaceMat } from './materials.ts';
 import { Graphics } from './Graphics.ts';
-import { setLit } from './litMaterials.ts';
+import { litSurface, PAT_YARD, setLit } from './litMaterials.ts';
 
 /** Ab dieser Auflösung (m pro Pixel) werden Kacheln geladen, darüber nur die Übersicht. */
 const TILE_MPP = 2.6;
@@ -125,8 +125,9 @@ export class WorldView {
     this.miniCamera.layers.enable(RL_MINI);
     this.gfx = new Graphics(this.renderer, this.scene, this.cam3d);
     // Boden bis zum Horizont (nur 3D), damit hinter den geladenen Kacheln kein Loch ist
-    const gm = new THREE.MeshStandardMaterial({ color: 0x8f8b78, roughness: 1, transparent: true, depthTest: false, depthWrite: false });
-    this.horizonGround = new THREE.Mesh(new THREE.CircleGeometry(4000, 48), gm);
+    const hg = new THREE.CircleGeometry(4000, 48);
+    hg.setAttribute('color', new THREE.BufferAttribute(new Float32Array(hg.getAttribute('position').count * 3).fill(0.56), 3));
+    this.horizonGround = new THREE.Mesh(hg, litSurface(PAT_YARD, 1, false));
     this.horizonGround.renderOrder = -1;
     this.horizonGround.frustumCulled = false;
     this.horizonGround.layers.set(RL_MAIN);

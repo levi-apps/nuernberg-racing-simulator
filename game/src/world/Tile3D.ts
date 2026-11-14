@@ -14,6 +14,7 @@ import { edgeNormal, hash, pick, ridgeProj, roofInfo, type SignalSlot } from './
 import { TREE_GREENS } from './style.ts';
 import { AD, adMaterial, type AdRegion } from './Ads.ts';
 import { models } from '../assets/Models.ts';
+import { lampGlow } from './LampGlow.ts';
 
 /** Fassadenfarben: Putz, Sandstein (Nürnberger Altstadt), Beton */
 const FACADE = [0xe3d9c6, 0xd8cbb2, 0xcdb895, 0xe8e2d6, 0xc7ae8c, 0xd2c2a6, 0xbfa483, 0xe0d4bd, 0xe6d3b8, 0xd9c9b0, 0xc9b9a4, 0xb39472];
@@ -183,6 +184,7 @@ export function buildTile3D(t: Tile): Tile3D {
     m.userData.is3d = true;
     objects.push(m);
   }
+  for (const o of lampGlow(streetLamps)) objects.push(o);
   return { objects, lampSlots, lampAttr, streetLamps };
 }
 

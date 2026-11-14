@@ -307,7 +307,7 @@ export class Graphics {
       this.aoPass.updateGtaoMaterial({ radius: 1.6, distanceExponent: 1.5, thickness: 1.2, scale: 1, samples: q.shadows >= 4096 ? 16 : 12 });
       c.addPass(this.aoPass);
     }
-    if (q.bloom) c.addPass(new UnrealBloomPass(new THREE.Vector2(w, h), 0.42, 0.5, 0.96));
+    if (q.bloom) c.addPass(new UnrealBloomPass(new THREE.Vector2(w, h), 0.4, 0.32, 0.97));
     c.addPass(new OutputPass());
     this.grade = new ShaderPass(GradeShader);
     this.grade.uniforms.uRays.value = q.ao ? 1 : 0;
