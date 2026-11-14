@@ -7,6 +7,7 @@ import { Hud } from './Hud.ts';
 import { Input } from './Input.ts';
 import { WorldQuery } from './WorldQuery.ts';
 import { DriveFx } from './DriveFx.ts';
+import type { StreetLife } from '../world/StreetLife.ts';
 import { projectOnPolyline, type WorldView } from '../world/WorldView.ts';
 import type { Lane } from '@nrs/shared';
 import type { TrafficSim } from '../traffic/TrafficSim.ts';
@@ -53,6 +54,7 @@ export class DriveController {
   /** Admin: keine Kollisionen mit Gebäuden und Verkehr */
   ghost = false;
   traffic?: TrafficSim;
+  streetLife?: StreetLife;
   /** wird aufgerufen, wenn das Auto weit versetzt wird */
   onTeleport?: () => void;
   /** Aufprall (Gebäude oder Fahrzeug) mit Geschwindigkeit in m/s */
@@ -187,7 +189,7 @@ export class DriveController {
           }
         }
         // andere Fahrzeuge
-        const imp = this.ghost ? 0 : (this.traffic?.collidePlayer() ?? 0);
+        const imp = this.ghost ? 0 : Math.max(this.traffic?.collidePlayer() ?? 0, this.view3D ? (this.streetLife?.collide(car) ?? 0) : 0);
         if (imp > 3 && v.time - this.lastImpact > 0.6) {
           this.lastImpact = v.time;
           this.hud.message(imp > 10 ? 'Unfall!' : 'Blechschaden', 1.2);

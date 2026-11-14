@@ -665,7 +665,7 @@ export class TrafficSim {
 const RANKED_BUS = new Set<RoadClass>(['primary', 'secondary', 'tertiary']);
 
 /** Überlappung zweier gedrehter Rechtecke. Liefert Normale (von B nach A) und Eindringtiefe. */
-function obbOverlap(
+export function obbOverlap(
   ax: number,
   ay: number,
   ah: number,

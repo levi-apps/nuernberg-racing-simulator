@@ -13,6 +13,7 @@ import { buildLandmark, buildReplacement, inAltstadt, landmarkInfo, pointLandmar
 import { edgeNormal, hash, pick, ridgeProj, roofInfo, type SignalSlot } from './TileView.ts';
 import { TREE_GREENS } from './style.ts';
 import { AD, adMaterial, type AdRegion } from './Ads.ts';
+import { models } from '../assets/Models.ts';
 
 /** Fassadenfarben: Putz, Sandstein (Nürnberger Altstadt), Beton */
 const FACADE = [0xe3d9c6, 0xd8cbb2, 0xcdb895, 0xe8e2d6, 0xc7ae8c, 0xd2c2a6, 0xbfa483, 0xe0d4bd, 0xe6d3b8, 0xd9c9b0, 0xc9b9a4, 0xb39472];
@@ -45,7 +46,8 @@ export function buildTile3D(t: Tile): Tile3D {
   // Bäume: Stamm und Krone aus mehreren Ballen
   const trunks = new Mesh3DBuilder();
   const crowns = new Mesh3DBuilder();
-  const tr = t.trees ?? [];
+  // mit geladenen Baummodellen zeichnet das Straßenleben die Bäume
+  const tr = models.ready && models.trees.length ? [] : (t.trees ?? []);
   for (let i = 0; i < tr.length; i += 3) {
     const x = tr[i] / 10;
     const y = tr[i + 1] / 10;
@@ -582,6 +584,8 @@ function billboard(poles: Mesh3DBuilder, ads: Mesh3DBuilder, x: number, y: numbe
   // Rückseite und Rahmen
   box(poles, x - nx * 0.12, y - ny * 0.12, z - 0.15, z + h + 0.15, w + 0.3, 0.18, Math.atan2(ry, rx), 0x26282d);
   adPanel(ads, x + nx * 0.01, y + ny * 0.01, z, nx, ny, w, h, AD.landscape[seed % AD.landscape.length]);
+  // doppelseitig: hinten ein anderes Motiv
+  adPanel(ads, x - nx * 0.22, y - ny * 0.22, z, -nx, -ny, w, h, AD.landscape[(seed + 1) % AD.landscape.length]);
   // Strahler oben
   for (const f of [-0.3, 0.3]) box(poles, x + rx * w * f + nx * 0.6, y + ry * w * f + ny * 0.6, z + h + 0.1, z + h + 0.3, 0.3, 0.3, 0, 0x1d1f22);
 }

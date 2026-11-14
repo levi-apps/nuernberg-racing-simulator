@@ -57,6 +57,24 @@ export class WorldView {
   /** Punkt, um den immer Kacheln geladen werden (Auto), und Radius (m) für Verkehrssimulation */
   anchor: [number, number] | null = null;
   anchorRadius = 520;
+  /** 3D-Körper einer Kachel wurden erzeugt / Kachel entladen */
+  onTile3D?: (tile: Tile) => void;
+  onTileUnload?: (key: string) => void;
+
+  /** Schlüssel der gerade sichtbaren Kacheln */
+  visibleKeys(): string[] {
+    const out: string[] = [];
+    for (const [k, v] of this.views) if (v.group.visible) out.push(k);
+    return out;
+  }
+
+  /** alle Kacheln mit 3D-Körpern */
+  tiles3D(): Tile[] {
+    const out: Tile[] = [];
+    for (const v of this.views.values()) if (v.has3D) out.push(v.tile);
+    return out;
+  }
+
   /** wird nach dem Laden jeder Kachel aufgerufen */
   onTileLoaded?: (tile: Tile) => void;
 
@@ -352,7 +370,7 @@ export class WorldView {
       if (v) {
         if (visible.has(k)) {
           v.group.visible = true;
-          if (in3d) v.ensure3D();
+          if (in3d && v.ensure3D()) this.onTile3D?.(v.tile);
           v.setDim(dim, true);
           this.applyLayers(v);
         }
@@ -410,6 +428,7 @@ export class WorldView {
   private unload(k: string): void {
     const v = this.views.get(k);
     if (!v) return;
+    this.onTileUnload?.(k);
     this.scene.remove(v.group);
     v.dispose();
     this.views.delete(k);

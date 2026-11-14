@@ -161,13 +161,18 @@ export class TileView {
   }
 
   /** 3D-Körper bei Bedarf erzeugen (erst beim ersten Wechsel in die 3D-Ansicht) */
-  ensure3D(): void {
-    if (this.built3d) return;
+  get has3D(): boolean {
+    return this.built3d;
+  }
+
+  ensure3D(): boolean {
+    if (this.built3d) return false;
     this.built3d = true;
     const t3 = buildTile3D(this.tile);
     for (const o of t3.objects) this.add(o.userData.layer as LayerName, o, o.renderOrder, '3d');
     this.streetLamps = t3.streetLamps;
     if (t3.lampAttr) this.signalGroups.push({ attr: t3.lampAttr, slots: t3.lampSlots, palette: LAMP });
+    return true;
   }
 
   private build() {

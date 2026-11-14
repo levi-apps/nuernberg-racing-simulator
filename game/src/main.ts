@@ -22,6 +22,8 @@ import { TuningUi } from './garage/TuningUi.ts';
 import { NITRO_SECONDS, PARTS, tunedSpec } from './garage/Tuning.ts';
 import { poiTarget, type NavData } from './nav/NavData.ts';
 import { formatEuro } from './missions/MissionUi.ts';
+import { loadModels, models } from './assets/Models.ts';
+import { StreetLife } from './world/StreetLife.ts';
 
 const canvas = document.getElementById('map') as HTMLCanvasElement;
 const view = new WorldView(canvas);
@@ -29,6 +31,17 @@ const debug = new DebugUi(view, canvas);
 const drive = new DriveController(view);
 const traffic = new TrafficSim(view, drive.car);
 const trafficView = new TrafficRenderer();
+const streetLife = new StreetLife(view.scene);
+drive.streetLife = streetLife;
+view.onTile3D = (t) => streetLife.addTile(t);
+view.onTileUnload = (k) => streetLife.removeTile(k);
+/** Straßenleben aller Kacheln neu erzeugen (nach dem Laden von Modellen oder Haltestellen) */
+function refreshStreetLife() {
+  for (const t of view.tiles3D()) {
+    streetLife.removeTile(`${t.tx}_${t.ty}`);
+    streetLife.addTile(t);
+  }
+}
 const labels = new StreetLabels(view);
 const missionUi = new MissionUi();
 let navi: Navigator | null = null;
@@ -175,6 +188,7 @@ canvas.addEventListener('pointerup', (e) => {
   drive.hud.message('Teleport', 1.2);
 });
 let menu: StartMenu | null = null;
+let onModelsReady: (() => void) | null = null;
 view.scene.add(trafficView.group, trafficView.group3d);
 drive.onView3D = (on) => {
   trafficView.set3D(on);
@@ -228,7 +242,7 @@ debug.extraPick = (x, y) => {
 debug.extraStatus = () => `KI-Fahrzeuge: ${traffic.count}${traffic.enabled ? '' : ' (aus)'}`;
 
 // für Debugging in der Browser-Konsole
-Object.assign(window as object, { map: view, drive, traffic });
+Object.assign(window as object, { map: view, drive, traffic, streetLife, models });
 
 type Mode = 'drive' | 'map';
 let mode: Mode = 'drive';
@@ -336,10 +350,30 @@ async function main() {
     /* egal */
   }
 
+  // 3D-Modelle (Autos, Figuren, Bäume) im Hintergrund laden
+  loadModels(`${import.meta.env.BASE_URL}models`)
+    .then(() => {
+      if (!inTransfer()) applyOwnCar();
+      trafficView.useModels();
+      refreshStreetLife();
+      onModelsReady?.();
+    })
+    .catch((e) => console.error('Modelle', e));
+
   // Navigation und Aufträge im Hintergrund laden
   loadNavData(`${import.meta.env.BASE_URL}world`)
     .then((data) => {
       navData = data;
+      // Bushaltestellen für die Wartehäuschen
+      const seen = new Set<string>();
+      for (const line of data.bus.lines)
+        for (const st of line.stops) {
+          const key = `${st.n}|${Math.round(st.x / 100)}|${Math.round(st.y / 100)}`;
+          if (seen.has(key)) continue;
+          seen.add(key);
+          streetLife.busStops.push({ x: st.x / 10, y: st.y / 10, lane: st.l, s: st.s / 10 });
+        }
+      refreshStreetLife();
       navi = new Navigator(view, drive.car, data);
       jobs = new JobSystem(data, data.bus, navi, drive.car, missionUi, drive.hud, profile, markers, view.scene, () => view.time, {
         setCar: (id, color) => {
@@ -370,6 +404,8 @@ async function main() {
     drive.update(dt);
     if (drive.spawnedOk) traffic.update(dt);
     trafficView.update(traffic.vehicles);
+    const peds = { low: 0, medium: 12, high: 24, ultra: 40 }[view.gfx.effective];
+    streetLife.update(dt, mode === 'drive' && drive.view3D, view.visibleKeys(), view.cam3dTarget, drive.car, peds);
     navi?.update(dt);
     jobs?.update(dt, mode === 'drive' && !garage.open && !tuning.open && !admin.open && !menu?.open);
     markers.setVisible(mode === 'drive');

@@ -6,6 +6,19 @@ import * as THREE from 'three';
 import type { Car } from './Car.ts';
 import type { Body } from '../garage/Cars.ts';
 import { carLights, carMaterials, carParts } from './CarModel.ts';
+import { carMaterialList, models, paintMaterial } from '../assets/Models.ts';
+
+/** Karosserieform -> Kenney-Modell */
+export const BODY_MODEL: Partial<Record<Body, string>> = {
+  small: 'hatchback_sports',
+  compact: 'sedan',
+  wagon: 'suv',
+  van: 'van',
+  sedan: 'suv_luxury',
+  sport: 'sedan_sports',
+  hyper: 'race_car_future',
+  tow: 'truck_flat',
+};
 import { render3d } from '../world/render3d.ts';
 
 const mat = (color: number, opacity = 1) =>
@@ -60,6 +73,9 @@ export class CarMesh {
   private lastX = 0;
   private lastY = 0;
   private shadow2d!: THREE.Object3D;
+  private paint: THREE.MeshStandardMaterial | null = null;
+  /** Karosserie-Mesh (für Dellen) */
+  bodyMesh: THREE.Mesh | null = null;
   private tailMat = mat(0x8a0d16);
   private flames: THREE.Mesh[] = [];
   private reverseMat = mat(0x666666);
@@ -140,12 +156,8 @@ export class CarMesh {
     add(new THREE.PlaneGeometry(0.12, 0.3), this.reverseMat, 5, -L / 2 + 0.08, 0);
     this.parts2d = this.group.children.slice(nShadow);
 
-    // ---------------- 3D: gerundete Karosserie mit Lackspiegelung, Räder mit Felgen
-    const parts = carParts(body, L, W);
-    const paint = new THREE.MeshPhysicalMaterial({ color, metalness: 0.45, roughness: 0.32, clearcoat: 1, clearcoatRoughness: 0.14, transparent: true });
+    // ---------------- 3D: Kenney-Modell (falls geladen), sonst gerundete Eigenkonstruktion
     this.brake3d = new THREE.MeshStandardMaterial({ color: 0x5a0000, emissive: 0xff1a10, emissiveIntensity: 0.4, roughness: 0.3, transparent: true });
-    const mats = carMaterials(paint, this.brake3d);
-    const bodyMesh = new THREE.Mesh(parts.body, mats);
     const setup = (o: THREE.Object3D) => {
       o.renderOrder = 25;
       o.layers.set(1);
@@ -153,20 +165,52 @@ export class CarMesh {
       o.castShadow = true;
       o.receiveShadow = true;
     };
-    setup(bodyMesh);
-    this.group3d.add(bodyMesh);
-    parts.wheels.forEach(([x, y, z], i) => {
-      const pivot = new THREE.Group();
-      pivot.position.set(x, y, z);
-      const w = new THREE.Mesh(parts.wheel, mats);
-      setup(w);
-      if (y < 0) w.rotation.z = Math.PI; // Felge nach außen
-      pivot.add(w);
-      this.group3d.add(pivot);
-      this.wheels3d.push(w);
-      if (i < 2) this.frontWheels3d.push(pivot);
-    });
-    this.wheelR = parts.wheels[0][2];
+    const proto = models.ready ? models.cars.get(BODY_MODEL[body] ?? '') : undefined;
+    if (proto) {
+      const sc = L / proto.length;
+      const tex = proto.material.map!;
+      this.paint = paintMaterial(tex, proto.paintCell, proto.cellLum);
+      (this.paint.userData.uPaint as { value: THREE.Color }).value.setHex(color);
+      const mats = carMaterialList(proto, this.brake3d);
+      mats[0] = this.paint;
+      const bodyMesh = new THREE.Mesh(proto.body, mats);
+      bodyMesh.scale.setScalar(sc);
+      setup(bodyMesh);
+      this.group3d.add(bodyMesh);
+      this.bodyMesh = bodyMesh;
+      for (const w of proto.wheels) {
+        const pivot = new THREE.Group();
+        pivot.position.set(w.x * sc, w.y * sc, w.z * sc);
+        const wm = new THREE.Mesh(w.geo, this.paint);
+        wm.scale.setScalar(sc);
+        setup(wm);
+        pivot.add(wm);
+        this.group3d.add(pivot);
+        this.wheels3d.push(wm);
+        if (w.front) this.frontWheels3d.push(pivot);
+      }
+      this.wheelR = Math.max(0.2, (proto.wheels[0]?.z ?? 0.33) * sc);
+    } else {
+      const parts = carParts(body, L, W);
+      const paint = new THREE.MeshPhysicalMaterial({ color, metalness: 0.45, roughness: 0.32, clearcoat: 1, clearcoatRoughness: 0.14, transparent: true });
+      const mats = carMaterials(paint, this.brake3d);
+      const bodyMesh = new THREE.Mesh(parts.body, mats);
+      setup(bodyMesh);
+      this.group3d.add(bodyMesh);
+      this.bodyMesh = bodyMesh;
+      parts.wheels.forEach(([x, y, z], i) => {
+        const pivot = new THREE.Group();
+        pivot.position.set(x, y, z);
+        const w = new THREE.Mesh(parts.wheel, mats);
+        setup(w);
+        if (y < 0) w.rotation.z = Math.PI; // Felge nach außen
+        pivot.add(w);
+        this.group3d.add(pivot);
+        this.wheels3d.push(w);
+        if (i < 2) this.frontWheels3d.push(pivot);
+      });
+      this.wheelR = parts.wheels[0][2];
+    }
 
     // Nitro-Flamme hinter dem Auto
     const flameMat = new THREE.MeshBasicMaterial({ color: 0x4fc3ff, transparent: true, opacity: 0.85, depthWrite: false, blending: THREE.AdditiveBlending });

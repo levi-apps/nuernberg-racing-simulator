@@ -6,6 +6,11 @@ import type { Vehicle } from './TrafficSim.ts';
 import { carMaterials, carMerged } from '../drive/CarModel.ts';
 import type { Body } from '../garage/Cars.ts';
 import { render3d } from '../world/render3d.ts';
+import { carMaterialList, models } from '../assets/Models.ts';
+
+/** Kenney-Modelle für KI-Fahrzeuge: Pkw-Mix und Lieferwagen */
+const KENNEY_CARS = ['sedan', 'sedan_sports', 'hatchback_sports', 'suv', 'suv_luxury', 'taxi', 'sedan', 'hatchback_sports', 'suv', 'sedan', 'police_car'];
+const KENNEY_VANS = ['van', 'delivery_van', 'delivery_flat', 'truck', 'garbage_truck'];
 
 /** Modellvarianten für KI-Fahrzeuge (Basisgröße, wird je Fahrzeug skaliert) */
 const VARIANTS: Array<{ body: Body; L: number; W: number }> = [
@@ -49,6 +54,11 @@ export class TrafficRenderer {
   /** 3D: ein instanziertes Modell je Variante (Lack über Instanzfarbe) */
   group3d = new THREE.Group();
   private models: THREE.InstancedMesh[] = [];
+  /** Kenney: Modellname je Variante, Basisgröße */
+  private kenney: Array<{ L: number; W: number; H: number }> = [];
+  private kCars: number[] = [];
+  private kVans: number[] = [];
+  private kBus = -1;
   private use3d = false;
   private m = new THREE.Matrix4();
   private q = new THREE.Quaternion();
@@ -93,6 +103,44 @@ export class TrafficRenderer {
     this.group3d.visible = false;
   }
 
+  /** nach dem Laden der Modelle: Kenney-Autos statt Eigenbau */
+  useModels(): void {
+    if (!models.ready || !models.cars.size) return;
+    for (const im of this.models) {
+      this.group3d.remove(im);
+      im.dispose();
+    }
+    this.models = [];
+    this.kenney = [];
+    this.kCars = [];
+    this.kVans = [];
+    const add = (geo: THREE.BufferGeometry, mats: THREE.Material[], max: number, L: number, W: number, H: number) => {
+      const im = new THREE.InstancedMesh(geo, mats, max);
+      im.count = 0;
+      im.renderOrder = 19;
+      im.frustumCulled = false;
+      im.castShadow = true;
+      im.receiveShadow = true;
+      im.layers.set(1);
+      im.instanceMatrix.setUsage(THREE.DynamicDrawUsage);
+      im.setColorAt(0, this.c.set(0xffffff));
+      this.models.push(im);
+      this.kenney.push({ L, W, H });
+      this.group3d.add(im);
+      return this.models.length - 1;
+    };
+    const idx = new Map<string, number>();
+    for (const name of new Set([...KENNEY_CARS, ...KENNEY_VANS])) {
+      const p = models.cars.get(name);
+      if (!p) continue;
+      idx.set(name, add(p.merged, carMaterialList(p), MAX, p.length, p.width, p.height));
+    }
+    this.kCars = KENNEY_CARS.map((n) => idx.get(n)).filter((i): i is number => i !== undefined);
+    this.kVans = KENNEY_VANS.map((n) => idx.get(n)).filter((i): i is number => i !== undefined);
+    const paint = new THREE.MeshStandardMaterial({ color: 0xffffff, metalness: 0.35, roughness: 0.36, transparent: true });
+    this.kBus = add(carMerged('bus', 12, 2.55), carMaterials(paint), 40, 12, 2.55, 3.2);
+  }
+
   set3D(on: boolean): void {
     this.use3d = on;
     this.group3d.visible = on;
@@ -111,16 +159,20 @@ export class TrafficRenderer {
 
   private update3d(vehicles: Vehicle[], n: number): void {
     const counts = this.models.map(() => 0);
+    const k3 = this.kenney.length > 0;
     for (let i = 0; i < n; i++) {
       const v = vehicles[i];
-      const vi = v.type === 'bus' ? 5 : v.type === 'van' ? 4 : v.id % 4;
+      let vi: number;
+      if (k3) vi = v.type === 'bus' ? this.kBus : v.type === 'van' ? this.kVans[v.id % this.kVans.length] : this.kCars[v.id % this.kCars.length];
+      else vi = v.type === 'bus' ? 5 : v.type === 'van' ? 4 : v.id % 4;
       const im = this.models[vi];
       const k = counts[vi]++;
       if (k >= im.instanceMatrix.count) continue;
-      const base = VARIANTS[vi];
+      const base = k3 ? this.kenney[vi] : VARIANTS[vi];
       this.p.set(v.x, v.y, 0);
       this.q.setFromAxisAngle(this.z, v.hdg);
-      this.sc.set(v.len / base.L, v.width / base.W, 1);
+      const sx = v.len / base.L;
+      this.sc.set(sx, v.width / base.W, k3 && v.type !== 'bus' ? sx : 1);
       this.m.compose(this.p, this.q, this.sc);
       im.setMatrixAt(k, this.m);
       im.setColorAt(k, this.c.setHex(v.crashed > 0 ? 0x777777 : v.color));
