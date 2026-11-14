@@ -77,6 +77,18 @@ float detail(float sizeM) {
   return clamp((sizeM / max(pxSize, 1e-4) - 2.0) / 4.0, 0.0, 1.0);
 }
 
+// Wellenhöhe für Wasser (für Normalen und Glitzern)
+float waterH(vec2 p) {
+  float t = uTime;
+  float h = 0.0;
+  h += sin(dot(p, vec2(0.83, 0.55)) * 0.9 + t * 1.3) * 0.5;
+  h += sin(dot(p, vec2(-0.41, 0.91)) * 1.7 + t * 1.9) * 0.28;
+  h += sin(dot(p, vec2(0.97, -0.24)) * 3.1 + t * 2.7) * 0.14;
+  h += (vnoise(p * 1.6 + vec2(t * 0.6, t * 0.35)) - 0.5) * 0.5;
+  h += (vnoise(p * 4.3 - vec2(t * 0.9, 0.0)) - 0.5) * 0.2;
+  return h;
+}
+
 void applyPattern(inout vec3 c) {
   vec2 w = vPW;
   pxSize = length(fwidth(w)) + length(fwidth(vPUv)) * 0.5;
@@ -107,8 +119,10 @@ void applyPattern(inout vec3 c) {
     // Wasser: dunkel, glatt, leichte Wellen (Spiegelung kommt von der Umgebung)
     float n = fbm(w * 0.09 + vec2(uTime * 0.03, uTime * 0.012));
     float r = fbm(w * 0.5 - vec2(uTime * 0.05, 0.0));
-    c *= 0.55 + 0.14 * n + 0.05 * r;
-    gPatRough = 0.03 + 0.08 * r;
+    // grünlich-tiefes Flusswasser mit helleren Strömungsbändern
+    c = mix(c, vec3(0.13, 0.27, 0.26), 0.45);
+    c *= 0.5 + 0.16 * n + 0.06 * r;
+    gPatRough = 0.02 + 0.06 * r;
   } else if (uPat == 6) {
     c *= 0.78 + 0.4 * vnoise(w * 13.0) * detail(0.08) + 0.12 * (fbm(w * 0.3) - 0.5);
   } else if (uPat == 7) {
@@ -311,11 +325,9 @@ export function patternize(m: THREE.Material, pat: number): void {
     sh.uniforms.uNight = lit.uNight;
     sh.uniforms.uWet = lit.uWet;
     sh.uniforms.uSnow = lit.uSnow;
-    sh.vertexShader = sh.vertexShader
-      .replace('#include <common>', '#include <common>\nvarying vec2 vPW;\nvarying vec2 vPUv;\nvarying vec3 vPWN;')
-      .replace(
-        '#include <project_vertex>',
-        `#include <project_vertex>
+    sh.vertexShader = sh.vertexShader.replace('#include <common>', '#include <common>\nvarying vec2 vPW;\nvarying vec2 vPUv;\nvarying vec3 vPWN;').replace(
+      '#include <project_vertex>',
+      `#include <project_vertex>
         {
           vec4 pw = vec4(transformed, 1.0);
           #ifdef USE_INSTANCING
@@ -326,10 +338,24 @@ export function patternize(m: THREE.Material, pat: number): void {
           vPUv = uv;
           vPWN = normalize(mat3(modelMatrix) * objectNormal);
         }`,
-      );
+    );
     sh.fragmentShader = sh.fragmentShader
       .replace('#include <common>', '#include <common>\n' + COMMON)
       .replace('#include <color_fragment>', '#include <color_fragment>\napplyPattern(diffuseColor.rgb);\napplyWeather(diffuseColor.rgb);')
+      .replace(
+        '#include <normal_fragment_maps>',
+        `#include <normal_fragment_maps>
+        if (uPat == 5) {
+          // bewegte Wellen: Normale aus dem Gefälle der Wellenhöhe
+          float e = 0.12;
+          float h0 = waterH(vPW);
+          float gx = (waterH(vPW + vec2(e, 0.0)) - h0) / e;
+          float gy = (waterH(vPW + vec2(0.0, e)) - h0) / e;
+          float fade = clamp(1.0 - length(fwidth(vPW)) * 0.6, 0.15, 1.0);
+          vec3 nW = normalize(vec3(-gx * 0.22 * fade, -gy * 0.22 * fade, 1.0));
+          normal = normalize((viewMatrix * vec4(nW, 0.0)).xyz);
+        }`,
+      )
       .replace('#include <roughnessmap_fragment>', '#include <roughnessmap_fragment>\nif (gPatRough >= 0.0) roughnessFactor = gPatRough;')
       .replace('#include <emissivemap_fragment>', '#include <emissivemap_fragment>\ntotalEmissiveRadiance += gPatEmis;');
   };

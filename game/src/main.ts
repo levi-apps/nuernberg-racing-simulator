@@ -112,6 +112,13 @@ tuning.onPaint = (c) => {
   profile.setPaint(profile.current, c);
   applyOwnCar();
 };
+tuning.damage = () => (inTransfer() ? 0 : drive.damage.level);
+tuning.onRepair = (price) => {
+  if (inTransfer() || profile.money < price) return;
+  profile.spend(price);
+  drive.repair();
+  drive.hud.message('Auto repariert ✨', 2);
+};
 tuning.onClose = () => {
   drive.input.enabled = mode === 'drive' && !menu?.open;
   jobs?.garageClosed();

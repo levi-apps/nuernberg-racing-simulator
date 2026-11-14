@@ -154,6 +154,25 @@ export class DriveFx {
     aa.needsUpdate = true;
   }
 
+  /** Rauch aus dem Motorraum: dark 0 = weißer Dampf, 1 = schwarzer Qualm */
+  engineSmoke(x: number, y: number, z: number, dark: number, vx: number, vy: number): void {
+    const i = this.sNext;
+    this.sNext = (this.sNext + 1) % MAX_SMOKE;
+    const k = i * 3;
+    this.sp[k] = x + (Math.random() - 0.5) * 0.3;
+    this.sp[k + 1] = y + (Math.random() - 0.5) * 0.3;
+    this.sp[k + 2] = z;
+    this.vel[k] = vx * 0.4 + (Math.random() - 0.5) * 0.6;
+    this.vel[k + 1] = vy * 0.4 + (Math.random() - 0.5) * 0.6;
+    this.vel[k + 2] = 1.2 + Math.random() * 0.9;
+    this.life[i] = 1.6 + Math.random() * 1.0;
+    const g = 0.85 - dark * 0.72 + Math.random() * 0.08;
+    this.sc[i * 4] = g;
+    this.sc[i * 4 + 1] = g;
+    this.sc[i * 4 + 2] = g * (1 - dark * 0.1);
+    this.sc[i * 4 + 3] = 0.55;
+  }
+
   private puff(x: number, y: number, vF: number): void {
     const i = this.sNext;
     this.sNext = (this.sNext + 1) % MAX_SMOKE;

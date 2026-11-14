@@ -21,8 +21,7 @@ export const BODY_MODEL: Partial<Record<Body, string>> = {
 };
 import { render3d } from '../world/render3d.ts';
 
-const mat = (color: number, opacity = 1) =>
-  new THREE.MeshBasicMaterial({ color, transparent: true, opacity, depthTest: false, depthWrite: false, side: THREE.DoubleSide });
+const mat = (color: number, opacity = 1) => new THREE.MeshBasicMaterial({ color, transparent: true, opacity, depthTest: false, depthWrite: false, side: THREE.DoubleSide });
 
 function shape(pts: Array<[number, number]>): THREE.ShapeGeometry {
   const s = new THREE.Shape(pts.map(([x, y]) => new THREE.Vector2(x, y)));
@@ -76,11 +75,17 @@ export class CarMesh {
   private paint: THREE.MeshStandardMaterial | null = null;
   /** Karosserie-Mesh (für Dellen) */
   bodyMesh: THREE.Mesh | null = null;
+  /** Ausgangspositionen der Karosserie (für Dellen-Begrenzung und Reparatur) */
+  private basePos: Float32Array | null = null;
+  private bodyScale = 1;
+  /** Lackfarbe (für abfallende Teile) */
+  color: number;
   private tailMat = mat(0x8a0d16);
   private flames: THREE.Mesh[] = [];
   private reverseMat = mat(0x666666);
 
   constructor(car: Car, color = 0xd7263d, body: Body = 'compact') {
+    this.color = color;
     const L = car.spec.length;
     const W = car.spec.width;
     const P = BODY[body];
@@ -175,6 +180,7 @@ export class CarMesh {
       mats[0] = this.paint;
       const bodyMesh = new THREE.Mesh(proto.body, mats);
       bodyMesh.scale.setScalar(sc);
+      this.bodyScale = sc;
       setup(bodyMesh);
       this.group3d.add(bodyMesh);
       this.bodyMesh = bodyMesh;
@@ -262,10 +268,91 @@ export class CarMesh {
     }
   }
 
+  /**
+   * Delle an einer Stelle der Karosserie (lokale Koordinaten in m, x vorn, y links).
+   * strength: Eindrücktiefe in m
+   */
+  /** bisherige Dellen (zum Übertragen auf ein neu aufgebautes Mesh desselben Autos) */
+  dents: Array<[number, number, number, number]> = [];
+
+  dent(lx: number, ly: number, lz: number, strength: number): void {
+    const mesh = this.bodyMesh;
+    if (!mesh) return;
+    this.dents.push([lx, ly, lz, strength]);
+    if (!this.basePos) {
+      // eigene Kopie, die Vorlage teilen sich alle Autos dieses Typs
+      const g = mesh.geometry.clone();
+      mesh.geometry = g;
+      this.basePos = (g.getAttribute('position').array as Float32Array).slice();
+    }
+    const g = mesh.geometry;
+    const pos = g.getAttribute('position') as THREE.BufferAttribute;
+    const a = pos.array as Float32Array;
+    const base = this.basePos;
+    const sc = this.bodyScale;
+    const hx = lx / sc;
+    const hy = ly / sc;
+    const hz = lz / sc;
+    const R = (0.75 + strength * 1.5) / sc;
+    // nach innen, Richtung Mitte
+    const il = Math.hypot(hx, hy) || 1;
+    const ix = -hx / il;
+    const iy = -hy / il;
+    const depth = strength / sc;
+    const maxD = 0.38 / sc;
+    for (let i = 0; i < a.length; i += 3) {
+      const dx = a[i] - hx;
+      const dy = a[i + 1] - hy;
+      const dz = (a[i + 2] - hz) * 1.4;
+      const d = Math.sqrt(dx * dx + dy * dy + dz * dz);
+      if (d >= R) continue;
+      const f = (1 - d / R) * (1 - d / R);
+      // leicht unregelmäßig, wie zerknülltes Blech
+      const n = 0.75 + 0.5 * Math.sin(a[i] * 37.1 + a[i + 1] * 17.3 + a[i + 2] * 23.7);
+      a[i] += ix * depth * f * n;
+      a[i + 1] += iy * depth * f * n;
+      a[i + 2] -= depth * f * 0.35 * n;
+      // nicht beliebig tief
+      const ox = a[i] - base[i];
+      const oy = a[i + 1] - base[i + 1];
+      const oz = a[i + 2] - base[i + 2];
+      const ol = Math.sqrt(ox * ox + oy * oy + oz * oz);
+      if (ol > maxD) {
+        const k = maxD / ol;
+        a[i] = base[i] + ox * k;
+        a[i + 1] = base[i + 1] + oy * k;
+        a[i + 2] = base[i + 2] + oz * k;
+      }
+    }
+    pos.needsUpdate = true;
+    g.computeVertexNormals();
+  }
+
+  /** Lack stumpfer und dunkler mit zunehmendem Schaden (0..1) */
+  setWear(level: number): void {
+    const m = (this.paint ?? (Array.isArray(this.bodyMesh?.material) ? this.bodyMesh!.material[0] : null)) as THREE.MeshStandardMaterial | null;
+    if (!m) return;
+    m.userData.baseRough ??= m.roughness;
+    m.roughness = Math.min(1, (m.userData.baseRough as number) + level * 0.5);
+    const phys = m as THREE.MeshPhysicalMaterial;
+    if (phys.isMeshPhysicalMaterial) phys.clearcoat = 1 - level * 0.9;
+  }
+
+  /** Dellen entfernen */
+  repair(): void {
+    if (!this.bodyMesh || !this.basePos) return;
+    const pos = this.bodyMesh.geometry.getAttribute('position') as THREE.BufferAttribute;
+    (pos.array as Float32Array).set(this.basePos);
+    this.dents = [];
+    pos.needsUpdate = true;
+    this.bodyMesh.geometry.computeVertexNormals();
+    this.setWear(0);
+  }
+
   dispose(): void {
-    for (const g of [this.group, this.group3d])
-      g.traverse((o) => {
-        (o as THREE.Mesh).geometry?.dispose();
-      });
+    // nur eigene Geometrien freigeben (Modell-Vorlagen werden geteilt)
+    const own = this.basePos ? this.bodyMesh?.geometry : null;
+    for (const o of this.group.children) (o as THREE.Mesh).geometry?.dispose();
+    own?.dispose();
   }
 }

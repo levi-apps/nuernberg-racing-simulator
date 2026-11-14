@@ -64,6 +64,8 @@ export class Car {
   boost = 0;
   /** Tempo-Faktor aus dem Admin-Panel */
   power = 1;
+  /** vom Admin-Panel eingestellter Leistungsfaktor (power = userPower × Schaden) */
+  userPower = 1;
   /** Haftung je nach Wetter (1 = trocken) */
   gripScale = 1;
 

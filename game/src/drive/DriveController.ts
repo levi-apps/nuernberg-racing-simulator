@@ -7,6 +7,7 @@ import { Hud } from './Hud.ts';
 import { Input } from './Input.ts';
 import { WorldQuery } from './WorldQuery.ts';
 import { DriveFx } from './DriveFx.ts';
+import { CarDamage } from './CarDamage.ts';
 import type { StreetLife } from '../world/StreetLife.ts';
 import { projectOnPolyline, type WorldView } from '../world/WorldView.ts';
 import type { Lane } from '@nrs/shared';
@@ -64,8 +65,12 @@ export class DriveController {
   }
 
   fx: DriveFx;
+  damage: CarDamage;
+  private wreckWarned = false;
+  private body: Body | null = null;
   constructor(private view: WorldView) {
     this.fx = new DriveFx(view.scene);
+    this.damage = new CarDamage(view.scene);
     this.mesh = new CarMesh(this.car);
     this.query = new WorldQuery(view);
     view.scene.add(this.mesh.group, this.mesh.group3d);
@@ -175,6 +180,9 @@ export class DriveController {
         } else this.nitro = Math.min(this.nitroCap, this.nitro + (PHYS_DT * this.nitroCap) / 25);
         car.gripScale = this.view.gfx.weather.grip;
         car.step(PHYS_DT, inp);
+        const pvx = car.vx;
+        const pvy = car.vy;
+        let hitSpeed = 0;
         // Auf Brücken und in Tunneln keine Gebäudekollision
         if (car.layer === 0 && !this.ghost) {
           const near = this.query.buildingsNear(car.x, car.y, car.spec.length);
@@ -182,6 +190,7 @@ export class DriveController {
             const hit = car.collide(near, (x, y) => this.query.onAnyRoad(x, y));
             if (hit && hit.speed > 4 && v.time - this.lastImpact > 0.6) {
               this.lastImpact = v.time;
+              hitSpeed = hit.speed;
               this.hud.message(hit.speed > 12 ? 'Krach!' : 'Rumms', 0.9);
               this.shake = Math.min(1, this.shake + hit.speed / 15);
               this.onImpact?.(hit.speed);
@@ -195,6 +204,23 @@ export class DriveController {
           this.hud.message(imp > 10 ? 'Unfall!' : 'Blechschaden', 1.2);
           this.shake = Math.min(1, this.shake + imp / 15);
           this.onImpact?.(imp);
+          hitSpeed = Math.max(hitSpeed, imp);
+        }
+        if (hitSpeed > 0) {
+          // Stoßrichtung aus der Geschwindigkeitsänderung
+          let nx = car.vx - pvx;
+          let ny = car.vy - pvy;
+          let nl = Math.hypot(nx, ny);
+          if (nl < 0.3) {
+            nx = -pvx;
+            ny = -pvy;
+            nl = Math.hypot(nx, ny) || 1;
+          }
+          this.damage.hit(car, this.mesh, hitSpeed, nx / nl, ny / nl, this.view3D);
+          if (this.damage.level >= 1 && !this.wreckWarned) {
+            this.wreckWarned = true;
+            this.hud.message('Motorschaden! Ab in die Werkstatt 🔧', 3);
+          }
         }
       }
       // Stadtgrenze
@@ -211,6 +237,8 @@ export class DriveController {
 
     this.mesh.update(car);
     if (this.spawned) this.fx.update(dt, car, this.lastHandbrake, this.lastBrake, this.view3D && this.active, v.mpp);
+    this.damage.update(dt, car, this.fx, this.view3D && this.active);
+    this.hud.setDamage(this.damage.level);
     v.carPose.x = car.x;
     v.carPose.y = car.y;
     v.carPose.heading = car.heading;
@@ -219,12 +247,28 @@ export class DriveController {
     if (this.active) this.updateCamera(dt);
   }
 
+  /** Schaden beheben (Werkstatt, Admin) */
+  repair(): void {
+    this.damage.repair(this.mesh);
+    this.wreckWarned = false;
+  }
+
   /** anderes Auto: Fahrwerte und Aussehen tauschen, Position bleibt */
   setCar(spec: CarSpec, color: number, body: Body): void {
+    // gleiches Auto (Tuning, Lack): Schaden bleibt, sonst frisch
+    const same = this.body === body && this.car.spec.length === spec.length && this.car.spec.width === spec.width;
+    const dents = same ? this.mesh.dents : [];
+    if (!same) {
+      this.damage.repair(this.mesh);
+      this.wreckWarned = false;
+    }
+    this.body = body;
     this.car.spec = { ...spec };
     this.view.scene.remove(this.mesh.group, this.mesh.group3d);
     this.mesh.dispose();
     this.mesh = new CarMesh(this.car, color, body);
+    for (const d of dents) this.mesh.dent(...d);
+    this.mesh.setWear(this.damage.level);
     this.view.scene.add(this.mesh.group, this.mesh.group3d);
     this.mesh.set3D(this.active && this.view3D);
     this.mesh.update(this.car);

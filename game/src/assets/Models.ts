@@ -61,6 +61,10 @@ export const models = {
   chars: [] as CharProto[],
   trees: [] as THREE.BufferGeometry[],
   treeMats: [] as THREE.Material[][],
+  /** Trümmerteile (Kenney Car Kit) in echter Größe, Ursprung in der Mitte */
+  debris: new Map<string, THREE.BufferGeometry>(),
+  /** Leitkegel (mit Palette-Textur) */
+  cone: null as { geo: THREE.BufferGeometry; mat: THREE.Material } | null,
   ready: false,
 };
 
@@ -345,12 +349,86 @@ async function loadTree(base: string, name: string): Promise<{ geo: THREE.Buffer
   }
 }
 
+/** Zielgröße (längste Kante, m) der Trümmerteile */
+const DEBRIS_SIZE: Record<string, number> = {
+  'debris-bumper': 1.7,
+  'debris-door': 1.1,
+  'debris-door-window': 1.1,
+  'debris-plate-a': 0.8,
+  'debris-plate-b': 0.7,
+  'debris-plate-small-a': 0.35,
+  'debris-plate-small-b': 0.3,
+  'debris-tire': 0.66,
+  'debris-spoiler-a': 1.3,
+  'debris-bolt': 0.08,
+};
+
+async function loadDebris(base: string): Promise<void> {
+  await Promise.all(
+    Object.entries(DEBRIS_SIZE).map(async ([name, size]) => {
+      try {
+        const gltf = await loader.loadAsync(`${base}/debris/${name}.glb`);
+        const holder = new THREE.Group();
+        holder.add(gltf.scene);
+        gltf.scene.rotation.x = Math.PI / 2;
+        holder.updateMatrixWorld(true);
+        const parts: THREE.BufferGeometry[] = [];
+        gltf.scene.traverse((o) => {
+          const mesh = o as THREE.Mesh;
+          if (mesh.isMesh) parts.push(bake(mesh, mesh.matrixWorld));
+        });
+        const g = mergeGeometries(parts.map((x) => (x.deleteAttribute('uv'), x)));
+        if (!g) return;
+        g.computeBoundingBox();
+        const b = g.boundingBox!;
+        const c = b.getCenter(new THREE.Vector3());
+        const sz = b.getSize(new THREE.Vector3());
+        g.translate(-c.x, -c.y, -c.z);
+        const k = size / Math.max(sz.x, sz.y, sz.z);
+        g.scale(k, k, k);
+        models.debris.set(name, g);
+      } catch (e) {
+        console.warn('Trümmer', name, e);
+      }
+    }),
+  );
+  try {
+    const gltf = await loader.loadAsync(`${base}/debris/cone.glb`);
+    const holder = new THREE.Group();
+    holder.add(gltf.scene);
+    gltf.scene.rotation.x = Math.PI / 2;
+    holder.updateMatrixWorld(true);
+    let geo: THREE.BufferGeometry | null = null;
+    let mat: THREE.Material | null = null;
+    gltf.scene.traverse((o) => {
+      const mesh = o as THREE.Mesh;
+      if (!mesh.isMesh || geo) return;
+      geo = bake(mesh, mesh.matrixWorld);
+      const m = mesh.material as THREE.MeshStandardMaterial;
+      mat = new THREE.MeshStandardMaterial({ map: m.map, roughness: 0.6, transparent: true });
+    });
+    if (geo && mat) {
+      const g = geo as THREE.BufferGeometry;
+      g.computeBoundingBox();
+      const b = g.boundingBox!;
+      const c = b.getCenter(new THREE.Vector3());
+      g.translate(-c.x, -c.y, -b.min.z);
+      const k = 0.72 / (b.max.z - b.min.z);
+      g.scale(k, k, k);
+      models.cone = { geo: g, mat };
+    }
+  } catch (e) {
+    console.warn('Leitkegel', e);
+  }
+}
+
 export async function loadModels(base: string): Promise<void> {
   const cars = await Promise.all(CAR_MODELS.map((n) => loadCar(base, n)));
   for (const c of cars) if (c) models.cars.set(c.name, c);
   const names = ['a', 'b', 'c', 'd', 'e', 'f'].flatMap((x) => [`mini_male_${x}`, `mini_female_${x}`]);
   const chars = await Promise.all(names.map((n) => loadChar(base, n)));
   models.chars = chars.filter((c): c is CharProto => !!c);
+  await loadDebris(base);
   // Reihenfolge fest: Bäume zuerst, die letzten beiden sind Büsche
   const trees = await Promise.all(['tree_oak', 'tree_fat', 'tree_dark', 'tree_autumn', 'bush', 'bush_large'].map((n) => loadTree(base, n)));
   for (const t of trees) {

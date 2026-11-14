@@ -12,6 +12,8 @@ export class Hud {
   private violEl = document.createElement('div');
   private nitroEl = document.createElement('div');
   private nitroBar = document.createElement('i');
+  private dmgEl = document.createElement('div');
+  private dmgBar = document.createElement('i');
   private msgTimer = 0;
 
   constructor() {
@@ -50,7 +52,15 @@ export class Hud {
     track.append(this.nitroBar);
     this.nitroEl.append(track);
     this.nitroEl.style.display = 'none';
-    dash.append(this.limitEl, this.speedEl, this.nitroEl);
+    this.dmgEl.className = 'nitro dmg';
+    this.dmgEl.innerHTML = '<span>🔧</span>';
+    const dtrack = document.createElement('div');
+    dtrack.className = 'track';
+    dtrack.append(this.dmgBar);
+    this.dmgEl.append(dtrack);
+    this.dmgEl.style.display = 'none';
+    this.dmgEl.title = 'Schaden';
+    dash.append(this.limitEl, this.speedEl, this.nitroEl, this.dmgEl);
     this.root.append(this.streetEl, dash, this.msgEl, this.helpEl, this.loadingEl, this.violEl);
     document.body.append(this.root);
   }
@@ -88,6 +98,13 @@ export class Hud {
     if (level === null) return;
     this.nitroBar.style.width = `${Math.round(level * 100)}%`;
     this.nitroEl.classList.toggle('on', active);
+  }
+
+  /** Schadensanzeige (nur sichtbar, wenn beschädigt) */
+  setDamage(level: number): void {
+    this.dmgEl.style.display = level > 0.01 ? '' : 'none';
+    this.dmgBar.style.width = `${Math.round(level * 100)}%`;
+    this.dmgBar.style.background = level > 0.6 ? '#ff3b30' : level > 0.3 ? '#ff9f0a' : '#ffd60a';
   }
 
   setViolations(n: number): void {

@@ -14,6 +14,9 @@ export class TuningUi {
   onBuy?: (part: Part) => void;
   onPaint?: (color: number) => void;
   onClose?: () => void;
+  /** Schaden 0..1 und Reparatur */
+  damage?: () => number;
+  onRepair?: (price: number) => void;
   /** Hinweis, wenn gerade ein Kundenauto gefahren wird */
   blocked?: () => string | null;
 
@@ -31,6 +34,7 @@ export class TuningUi {
       if (el.dataset.act === 'close') this.close();
       if (el.dataset.act === 'buy') this.onBuy?.(el.dataset.part as Part);
       if (el.dataset.act === 'paint') this.onPaint?.(Number(el.dataset.c));
+      if (el.dataset.act === 'repair') this.onRepair?.(Number(el.dataset.price));
       this.render();
     });
     window.addEventListener('keydown', (e) => {
@@ -80,9 +84,19 @@ export class TuningUi {
     const paints = PAINTS.map(
       (col) => `<i data-act="paint" data-c="${col}" style="background:#${col.toString(16).padStart(6, '0')}" class="${p.colorOf(car.id) === col ? 'on' : ''}"></i>`,
     ).join('');
+    const dmg = this.damage?.() ?? 0;
+    const repairPrice = Math.round(dmg * car.price * 0.06 * 100) / 100 + (dmg > 0 ? 15 : 0);
+    const repair =
+      dmg <= 0.001
+        ? '<span class="g-current">✔ keine Schäden</span>'
+        : p.money >= repairPrice
+          ? `<button class="g-buy" data-act="repair" data-price="${repairPrice}">Reparieren · ${formatEuro(repairPrice)}</button>`
+          : `<span class="g-missing">Reparieren · ${formatEuro(repairPrice)}</span>`;
+    const dmgBar = `<i style="display:inline-block;width:120px;height:8px;border-radius:4px;background:#e3e5e8;overflow:hidden;vertical-align:middle"><b style="display:block;height:100%;width:${Math.round(dmg * 100)}%;background:${dmg > 0.6 ? '#d2232a' : dmg > 0.3 ? '#ff8a00' : '#2b9a4a'}"></b></i>`;
     this.root.innerHTML = `<div class="g-box t-box">
       <div class="g-top"><h2>🔧 ${this.shop}</h2><span class="g-money">${formatEuro(p.money)}</span><button class="g-x" data-act="close">✕</button></div>
       <p class="g-where">Tuning für deinen <b>${car.name}</b>. ${block ?? 'Jede Stufe wirkt sofort.'}</p>
+      <div class="t-row"><div class="t-name">🛠️ <b>Karosserie & Motor</b><small>Dellen, fehlende Teile, Leistung</small></div><div class="t-lvl">${dmgBar}<small>Schaden ${Math.round(dmg * 100)} %</small></div><div class="t-act">${repair}</div></div>
       <div class="t-rows">${rows}</div>
       <div class="t-row"><div class="t-name">🎨 <b>Lackierung</b><small>kostenlos</small></div><div class="g-paints">${paints}</div></div>
       <p class="g-foot">Nitro zündest du mit <b>Shift</b> (Gamepad: RB) · <b>Esc</b> schließt</p>

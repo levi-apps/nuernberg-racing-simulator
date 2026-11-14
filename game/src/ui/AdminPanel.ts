@@ -169,10 +169,10 @@ export class AdminPanel {
           <p class="a-muted">Aktuell: x ${d.car.x.toFixed(0)}, y ${d.car.y.toFixed(0)} (Meter ab Hauptmarkt)</p>`;
       }
       case 'drive':
-        return `<h4>Leistung</h4><label class="a-range">Tempo & Beschleunigung ×<b>${d.car.power.toFixed(1)}</b><input type="range" data-opt="power" min="0.5" max="4" step="0.1" value="${d.car.power}"></label>
+        return `<h4>Leistung</h4><label class="a-range">Tempo & Beschleunigung ×<b>${d.car.userPower.toFixed(1)}</b><input type="range" data-opt="power" min="0.5" max="4" step="0.1" value="${d.car.userPower}"></label>
           <label class="a-check"><input type="checkbox" data-opt="ghost" ${d.ghost ? 'checked' : ''}> Geistermodus (durch Häuser und Autos fahren)</label>
           <label class="a-check"><input type="checkbox" data-opt="infNitro" ${d.infiniteNitro ? 'checked' : ''}> Unendlich Nitro</label>
-          <div class="a-grid"><button data-act="nitro">Nitro einbauen + füllen</button><button data-act="stop">Auto anhalten</button><button data-act="flip">Umdrehen (180°)</button><button data-act="road">Zurück auf die Straße</button></div>
+          <div class="a-grid"><button data-act="nitro">Nitro einbauen + füllen</button><button data-act="stop">Auto anhalten</button><button data-act="repair">Auto reparieren</button><button data-act="wreck">Schaden +25 %</button><button data-act="flip">Umdrehen (180°)</button><button data-act="road">Zurück auf die Straße</button></div>
           <h4>Kamera</h4><div class="a-grid"><button data-act="cam3d">3D ein/aus</button><button data-act="camrot">Kamera dreht mit ein/aus</button></div>`;
       case 'world':
         return `<h4>Verkehr</h4><label class="a-check"><input type="checkbox" data-opt="traffic" ${tr.enabled ? 'checked' : ''}> KI-Verkehr</label>
@@ -275,7 +275,7 @@ export class AdminPanel {
     }
     switch (t.dataset.opt) {
       case 'power':
-        d.car.power = Number(t.value);
+        d.car.userPower = Number(t.value);
         break;
       case 'ghost':
         d.ghost = t.checked;
@@ -308,7 +308,7 @@ export class AdminPanel {
     else {
       // Zahl neben dem Schieberegler aktualisieren
       const b = t.closest('label')?.querySelector('b');
-      if (b && t.dataset.opt === 'power') b.textContent = d.car.power.toFixed(1);
+      if (b && t.dataset.opt === 'power') b.textContent = d.car.userPower.toFixed(1);
       if (b && t.dataset.opt === 'density') b.textContent = `${Math.round(Number(t.value) * 100)} %`;
       if (b && t.dataset.opt === 'time') b.textContent = this.timeScale.toFixed(2);
     }
@@ -439,6 +439,14 @@ export class AdminPanel {
       case 'stop':
         d.car.vx = d.car.vy = 0;
         break;
+      case 'repair':
+        d.repair();
+        break;
+      case 'wreck': {
+        const a = Math.random() * Math.PI * 2;
+        d.damage.hit(d.car, d.mesh, 14, Math.cos(a), Math.sin(a), d.view3D);
+        break;
+      }
       case 'flip':
         d.car.heading += Math.PI;
         d.car.vx = d.car.vy = 0;

@@ -53,6 +53,12 @@ export class Profile {
     this.onChange?.();
   }
 
+  /** Geld ausgeben (Reparatur usw.) */
+  spend(amount: number): void {
+    this.money = Math.round((this.money - amount) * 100) / 100;
+    this.save();
+  }
+
   earn(amount: number): void {
     this.money += amount;
     this.earned += Math.max(0, amount);
