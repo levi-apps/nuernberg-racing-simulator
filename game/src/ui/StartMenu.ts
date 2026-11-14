@@ -36,7 +36,7 @@ export class StartMenu {
         </div>
         <div class="sm-search-row"></div>
         <div class="sm-list"></div>
-        <p class="sm-foot">W/S/A/D fahren · Leertaste Handbremse · <b>1</b> Taxi · <b>2</b> Kurier · <b>O</b> dieses Menü · <b>H</b> Hilfe</p>
+        <p class="sm-foot">W/S/A/D fahren · Leertaste Handbremse · Jobs: farbige Marker anfahren · <b>G</b> Garage · <b>V</b> 3D · <b>O</b> dieses Menü · <b>H</b> Hilfe</p>
       </div>`;
     this.search.placeholder = 'Stadtteil suchen …';
     this.search.className = 'sm-search';

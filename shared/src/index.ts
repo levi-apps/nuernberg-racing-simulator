@@ -378,3 +378,12 @@ export interface Poi {
 export interface PoiFile {
   pois: Poi[];
 }
+
+/** Buslinien (je Fahrtrichtung) mit Haltestellen in Fahrtreihenfolge */
+export interface BusFile {
+  lines: Array<{
+    ref: string;
+    name: string;
+    stops: Array<{ n: string; x: number; y: number; l: number; s: number }>;
+  }>;
+}

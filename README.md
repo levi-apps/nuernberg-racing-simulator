@@ -28,8 +28,8 @@ npm run dev             # Spiel unter http://localhost:5173
 | R | zurück auf die nächste Straße |
 | V | 3D-Ansicht (Verfolgerkamera) ↔ Draufsicht |
 | C | Kamera: Norden oben ↔ dreht mit dem Auto (Draufsicht) |
-| 1 / 2 | Taxi- bzw. Kurierdienst beginnen |
-| X | Dienst beenden bzw. Navigation beenden |
+| G | Garage / Autohaus (Autos wechseln, lackieren, kaufen) |
+| X | Job abbrechen bzw. Navigation beenden |
 | O | Startgebiet (Stadtteil) wählen |
 | T | KI-Verkehr an/aus |
 | + / − | Verkehrsdichte (25–250 %) |
@@ -71,11 +71,42 @@ Die Kamera folgt dem Auto schräg von hinten oben. Bei höherem Tempo steigt sie
 
 Straßen, Markierungen und Schatten bleiben flach auf dem Boden. Straßennamen erscheinen in 3D nur im Umkreis von etwa 110 m. Die Minikarte zeigt weiter die Draufsicht und dreht sich mit der Kamera.
 
-## Aufträge und Navigation
+## Jobs, Geld und Autos
 
-- **Taxi (Taste 1):** Ein Fahrgast wartet an einer echten Adresse in der Nähe. Fahr hin und halte neben dem gelben Ring an (unter 4 km/h). Dann geht es zum Wunschziel: einer Adresse oder einem Ort wie Hotel, Bahnhof, Museum oder Restaurant. Der Fahrpreis beträgt 4,90 € plus 2,50 € pro km (Spielwerte). Für eine zügige Fahrt gibt es bis zu 20 % Trinkgeld; jeder Unfall und jede rote Ampel kostet 10 %.
-- **Kurier (Taste 2):** Du holst eine Bestellung bei einem Restaurant oder Café ab und lieferst sie an eine Adresse, mit Zeitlimit. Bezahlt werden 5 € plus 1,60 € pro km und ein Zeitbonus; Unfälle beschädigen die Ware. Bei Verspätung gibt es kein Geld.
-- **Im Dienst:** Nach jedem Auftrag kommt automatisch der nächste. X beendet den Dienst. Der Kontostand wird im Browser gespeichert.
+Überall in der Stadt stehen farbige **Job-Marker** (am Boden, auf der Minikarte und mit Schild). Marker außerhalb des Bildes erscheinen am Rand mit Entfernung. Fahr hin und halte im Ring an, dann startet der Job. Bezahlt wird nach geplanter Fahrzeit, also ungefähr ein fester Betrag pro Minute je Job-Art.
+
+| Job | Fahrzeug | ca. €/min | Ablauf |
+|---|---|---|---|
+| 🚕 Taxi | jedes | 8 | Fahrgast an einer Adresse, Ziel Adresse oder Ort; Trinkgeld für zügige, saubere Fahrt |
+| 🍕 Essen liefern | jedes | 8 | Abholen bei Restaurant/Café, Zeitlimit, Zeitbonus |
+| 📦 Paket-Express | jedes | 9 | knappes Zeitlimit; Kombi +30 %, Sportwagen +50 % |
+| 🔑 Überführung | jedes | 10 | Kundenauto (teuer!) neben einem Autohaus übernehmen, Kratzer kosten Lohn |
+| 🚌 Buslinie | Bus | 11 | echte Linie aus OSM, 5–9 echte Haltestellen, an jeder kurz halten; Pünktlichkeitsbonus |
+| 🛋️ Umzug | Transporter/Abschlepper | 13 | lange Fahrt, Ladezeit, Schäden an den Möbeln kosten |
+| 🪝 Abschleppen | Abschleppwagen | 14 | Pannenauto hängt hinten dran, zur Werkstatt |
+| 🎩 VIP-Fahrt | Oberklasse | 18 | vom Hotel zu Oper, Bahnhof, Restaurant …; ohne Unfall/Rot gibt es 40 % Trinkgeld |
+| 🏁 Straßenrennen | jedes | Einsatz | gegen 3 Gegner über 2–4 km mit Kontrollpunkten; Sieg 2,2× Einsatz, Platz 2 1,2× |
+
+Grau mit Schloss bedeutet: Dafür fehlt das passende Fahrzeug. Unfälle und rote Ampeln mindern bei den meisten Jobs den Lohn. X bricht einen Job ab.
+
+**Autos kaufen** kannst du nur bei einem echten Autohaus (blaue 🚗-Marker, 95 Autohäuser aus OSM). Halte dort an, dann öffnet sich der Verkaufsraum. Mit G öffnest du jederzeit die Garage: eigene Autos wechseln, lackieren (12 Farben) oder die Navigation zum nächsten Autohaus starten.
+
+| Auto | Preis | Besonderheit | Spielzeit bis dahin (Ziel) |
+|---|---|---|---|
+| Stadtfloh | – | Startauto | – |
+| Pendler | 90 € | etwas schneller | 10–20 min |
+| Familienkombi | 220 € | Express +30 % | 30–40 min |
+| Lastesel (Transporter) | 250 € | Umzüge | 30–40 min |
+| Haken & Seil (Abschlepper) | 450 € | Abschleppen, Umzüge | |
+| Stadtbus | 520 € | Buslinien | |
+| Gran Turismo Lounge | 650 € | VIP-Fahrten, mehr Trinkgeld | 40–60 min |
+| Blitz GT | 2.200 € | 290 km/h, Express +50 % | 1,5–3 h |
+| Aurum Hyper | 8.000 € | 345 km/h, das teuerste | ~7 h |
+
+Spielstand (Geld, Autos, Farben) liegt im Browser (`localStorage`, Schlüssel `nrs.save`).
+
+## Navigation
+
 - **Navigation:** Die Route wird über den Spurgraphen berechnet, inklusive Einbahnstraßen und Abbiegeverboten. Die Kosten sind Fahrzeit plus Zuschläge für Abbiegen und Ampeln, eine Route dauert wenige Millisekunden. Oben steht der nächste Abbiegehinweis mit Straßenname, Restweg und Restzeit. Auf der Straße liegt eine blaue Linie, und ein gelber Pfeil am Bildrand zeigt zum Ziel, wenn es nicht sichtbar ist. Wer abbiegt, bekommt nach etwa 1,5 s eine neue Route.
 - **Minikarte (unten links):** etwa 670 × 670 m um dich, mit Route und Ziel.
 - **Debugansicht:** „Navigation hierher“ bei einer angeklickten Spur startet eine freie Navigation.
@@ -143,7 +174,8 @@ Meter in ETRS89 / UTM 32N (EPSG:25832), verschoben auf den Hauptmarkt als Urspru
 | `routing.bin` | Routinggraph über alle Spuren (binär, siehe `parseRouting` in `shared/`) |
 | `names.json` | Straßennamen für Abbiegehinweise |
 | `addresses.json` | ~74.000 Adressen, eingerastet auf die nächste öffentliche Spur |
-| `pois.json` | ~5.700 benannte Orte (Gastronomie, Läden, Hotels, Kliniken …) |
+| `pois.json` | ~5.700 benannte Orte (Gastronomie, Läden, Hotels, Kliniken, Autohäuser, Werkstätten …) |
+| `bus.json` | 164 Buslinien (je Richtung) mit eingerasteten Haltestellen |
 
 Objekte, die über Kachelgrenzen reichen, stehen in mehreren Kacheln mit derselben `id`.
 

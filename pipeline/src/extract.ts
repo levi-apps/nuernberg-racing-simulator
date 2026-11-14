@@ -66,6 +66,8 @@ export interface Extract {
   places: Array<{ name: string; p: Pt; kind: string }>;
   /** Bäume: [x, y, Kronenradius] */
   trees: Array<[number, number, number]>;
+  /** Buslinien mit Haltestellen in Fahrtreihenfolge */
+  busLines: Array<{ ref: string; name: string; stops: Array<{ name: string; p: Pt }> }>;
   addresses: RawAddress[];
   pois: RawPoi[];
 }
@@ -150,6 +152,7 @@ export function extract(pbfPath: string, log: (s: string) => void): Extract {
   const placeNodes: Array<{ name: string; p: Pt; kind: string }> = [];
   const addrPts: RawAddress[] = [];
   const treePts: Array<[number, number, number]> = [];
+  const busStops = new Map<number, { name: string; p: Pt }>();
   const treeRows: number[][] = [];
   const poiPts: RawPoi[] = [];
   type PW = { refs: number[]; tags: Tags };
@@ -166,6 +169,7 @@ export function extract(pbfPath: string, log: (s: string) => void): Extract {
   const memberCandidates = new Map<number, number[]>();
 
   const relations: Array<{ id: number; members: Member[]; tags: Tags }> = [];
+  const busRels: Array<{ id: number; members: Member[]; tags: Tags }> = [];
 
   const isControl = (t: Tags) =>
     t.highway === 'traffic_signals' ||
@@ -184,6 +188,9 @@ export function extract(pbfPath: string, log: (s: string) => void): Extract {
       nodes.push(id, x, y);
       if (tags) {
         if (isControl(tags)) controlNodes.set(id, { id, p: [x, y], tags });
+        const isBusStop =
+          tags.highway === 'bus_stop' || ((tags.public_transport === 'platform' || tags.public_transport === 'stop_position') && (tags.bus === 'yes' || tags.highway === 'bus_stop'));
+        if (isBusStop && tags.name) busStops.set(id, { name: tags.name, p: [x, y] });
         if (tags.natural === 'tree') {
           const dc = parseFloat(tags.diameter_crown ?? '');
           treePts.push([x, y, Number.isFinite(dc) && dc > 1 && dc < 30 ? dc / 2 : 0]);
@@ -210,6 +217,7 @@ export function extract(pbfPath: string, log: (s: string) => void): Extract {
     relation(id, members, tags) {
       const t = tags.type;
       if (t === 'multipolygon' || t === 'restriction' || id === CITY_RELATION || t === 'building') relations.push({ id, members, tags });
+      if (t === 'route' && (tags.route === 'bus' || tags.route === 'trolleybus')) busRels.push({ id, members, tags });
     },
   });
   if (!nodes.sorted) throw new Error('PBF-Knoten nicht nach ID sortiert');
@@ -374,8 +382,26 @@ export function extract(pbfPath: string, log: (s: string) => void): Extract {
   }
   log(`  ${trees.length.toLocaleString('de')} Bäume`);
 
+  // Buslinien: Haltestellen in Fahrtreihenfolge (Haltepositionen und Bahnsteige gleichen Namens zusammenfassen)
+  const busLines: Extract['busLines'] = [];
+  for (const r of busRels) {
+    const stops: Array<{ name: string; p: Pt }> = [];
+    for (const m of r.members) {
+      if (m.type !== 'node' || !/^(stop|platform)/.test(m.role)) continue;
+      const st = busStops.get(m.ref);
+      if (!st) continue;
+      if (stops.length && stops[stops.length - 1].name === st.name) continue;
+      if (stops.some((x) => x.name === st.name && Math.hypot(x.p[0] - st.p[0], x.p[1] - st.p[1]) < 80)) continue;
+      stops.push(st);
+    }
+    const inCity = stops.filter((st) => inside.contains(st.p));
+    if (inCity.length < 4) continue;
+    busLines.push({ ref: r.tags.ref ?? '?', name: r.tags.name ?? `Linie ${r.tags.ref ?? ''}`, stops: inCity });
+  }
+  log(`  ${busLines.length} Buslinien (Fahrtrichtungen), ${busStops.size.toLocaleString('de')} Haltestellen`);
+
   log(`  Im Stadtgebiet: ${roads.length.toLocaleString('de')} Straßen, ${buildings.length.toLocaleString('de')} Gebäude, ${areas.length.toLocaleString('de')} Flächen, ${lines.length.toLocaleString('de')} Linien`);
-  return { boundary, inside, roads, controlNodes, restrictions, buildings, areas, lines, places, trees, addresses, pois };
+  return { boundary, inside, roads, controlNodes, restrictions, buildings, areas, lines, places, trees, busLines, addresses, pois };
 }
 
 function pointInRingSafe(p: Pt, ring: Pt[]): boolean {

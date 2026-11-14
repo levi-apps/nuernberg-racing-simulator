@@ -1,26 +1,30 @@
 /**
  * Lädt Routinggraph, Straßennamen, Adressen und benannte Orte (einmalig, im Hintergrund).
  */
-import { parseRouting, type AddressFile, type Poi, type PoiFile, type RoutingGraph } from '@nrs/shared';
+import { parseRouting, type AddressFile, type BusFile, type Poi, type PoiFile, type RoutingGraph } from '@nrs/shared';
 
 export interface NavData {
   graph: RoutingGraph;
   names: string[];
   addr: AddressFile;
   pois: Poi[];
+  bus: BusFile;
 }
 
 let pending: Promise<NavData> | null = null;
 
 export function loadNavData(base: string): Promise<NavData> {
   pending ??= (async () => {
-    const [bin, names, addr, pois] = await Promise.all([
+    const [bin, names, addr, pois, bus] = await Promise.all([
       fetch(`${base}/routing.bin`).then((r) => r.arrayBuffer()),
       fetch(`${base}/names.json`).then((r) => r.json() as Promise<string[]>),
       fetch(`${base}/addresses.json`).then((r) => r.json() as Promise<AddressFile>),
       fetch(`${base}/pois.json`).then((r) => r.json() as Promise<PoiFile>),
+      fetch(`${base}/bus.json`)
+        .then((r) => (r.ok ? (r.json() as Promise<BusFile>) : { lines: [] }))
+        .catch(() => ({ lines: [] }) as BusFile),
     ]);
-    return { graph: parseRouting(bin), names, addr, pois: pois.pois };
+    return { graph: parseRouting(bin), names, addr, pois: pois.pois, bus };
   })();
   return pending;
 }

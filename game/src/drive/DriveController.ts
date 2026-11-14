@@ -9,6 +9,8 @@ import { WorldQuery } from './WorldQuery.ts';
 import { projectOnPolyline, type WorldView } from '../world/WorldView.ts';
 import type { Lane } from '@nrs/shared';
 import type { TrafficSim } from '../traffic/TrafficSim.ts';
+import type { CarSpec } from './Car.ts';
+import type { Body } from '../garage/Cars.ts';
 
 const PHYS_DT = 1 / 120;
 
@@ -181,6 +183,17 @@ export class DriveController {
     this.mesh.update(car);
     this.updateInfo(dt);
     if (this.active) this.updateCamera(dt);
+  }
+
+  /** anderes Auto: Fahrwerte und Aussehen tauschen, Position bleibt */
+  setCar(spec: CarSpec, color: number, body: Body): void {
+    this.car.spec = { ...spec };
+    this.view.scene.remove(this.mesh.group, this.mesh.group3d);
+    this.mesh.dispose();
+    this.mesh = new CarMesh(this.car, color, body);
+    this.view.scene.add(this.mesh.group, this.mesh.group3d);
+    this.mesh.set3D(this.active && this.view3D);
+    this.mesh.update(this.car);
   }
 
   setView3D(on: boolean): void {

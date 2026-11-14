@@ -5,7 +5,7 @@
  */
 import { writeFileSync } from 'node:fs';
 import { join } from 'node:path';
-import { dm, ROUTING_MAGIC, TURN_CODES, type AddressFile, type PoiFile } from '@nrs/shared';
+import { dm, ROUTING_MAGIC, TURN_CODES, type AddressFile, type BusFile, type PoiFile } from '@nrs/shared';
 import type { Extract } from './extract.ts';
 import type { RoadNet, LaneObj } from './roadnet.ts';
 import type { Pt } from './geo.ts';
@@ -157,5 +157,19 @@ export function writeNav(outDir: string, ex: Extract, net: RoadNet, mainNet: Uin
     pois.pois.push({ n: p.name, c: p.cat, t: p.sub, x: dm(p.p[0]), y: dm(p.p[1]), l: hit.lane.id, s: dm(hit.s) });
   }
   writeFileSync(join(outDir, 'pois.json'), JSON.stringify(pois));
+
+  // Buslinien: Haltestellen auf Spuren einrasten
+  const bus: BusFile = { lines: [] };
+  for (const line of ex.busLines) {
+    const stops: BusFile['lines'][number]['stops'] = [];
+    for (const st of line.stops) {
+      const hit = grid.nearest(st.p);
+      if (!hit) continue;
+      stops.push({ n: st.name, x: dm(st.p[0]), y: dm(st.p[1]), l: hit.lane.id, s: dm(hit.s) });
+    }
+    if (stops.length >= 4) bus.lines.push({ ref: line.ref, name: line.name, stops });
+  }
+  writeFileSync(join(outDir, 'bus.json'), JSON.stringify(bus));
+  log(`  ${bus.lines.length} Buslinien mit eingerasteten Haltestellen`);
   log(`  Routinggraph ${(total / 1e6).toFixed(1)} MB, ${addr.nums.length.toLocaleString('de')} Adressen (${dropped} ohne Straße in der Nähe), ${pois.pois.length.toLocaleString('de')} Orte`);
 }

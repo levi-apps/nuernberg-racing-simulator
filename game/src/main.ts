@@ -8,7 +8,11 @@ import { TrafficRenderer } from './traffic/TrafficRenderer.ts';
 import { StreetLabels } from './world/StreetLabels.ts';
 import { loadNavData } from './nav/NavData.ts';
 import { Navigator } from './nav/Navigator.ts';
-import { Missions } from './missions/Missions.ts';
+import { JobSystem } from './missions/Jobs.ts';
+import { MarkerLayer } from './missions/Markers.ts';
+import { Profile } from './garage/Profile.ts';
+import { carById } from './garage/Cars.ts';
+import { GarageUi } from './garage/GarageUi.ts';
 import { formatDist, formatTime, MissionUi } from './missions/MissionUi.ts';
 import { StartMenu } from './ui/StartMenu.ts';
 
@@ -21,7 +25,50 @@ const trafficView = new TrafficRenderer();
 const labels = new StreetLabels(view);
 const missionUi = new MissionUi();
 let navi: Navigator | null = null;
-let missions: Missions | null = null;
+let jobs: JobSystem | null = null;
+const profile = new Profile();
+const garage = new GarageUi(profile);
+const markers = new MarkerLayer(view);
+
+function applyOwnCar() {
+  const m = profile.car;
+  drive.setCar(m.spec, profile.colorOf(m.id), m.body);
+  missionUi.setMoney(profile.money);
+}
+applyOwnCar();
+
+garage.onSelect = (id) => {
+  if (jobs?.job?.offer.kind === 'transfer') return drive.hud.message('Erst die Überführung abschließen', 1.5);
+  profile.select(id);
+  applyOwnCar();
+};
+garage.onPaint = (id, c) => {
+  profile.setPaint(id, c);
+  if (profile.current === id && jobs?.job?.offer.kind !== 'transfer') applyOwnCar();
+};
+garage.onBuy = (id) => {
+  if (profile.buy(id)) {
+    applyOwnCar();
+    missionUi.showToast(`<b>Gekauft: ${carById(id).name}</b><br>Viel Spaß damit!`, 3);
+  }
+};
+garage.nearestText = () => {
+  const d = jobs?.nearestDealer();
+  return d ? `Nächstes: ${d.n} (${formatDist(Math.hypot(d.x / 10 - drive.car.x, d.y / 10 - drive.car.y))}).` : '';
+};
+garage.onNavigate = () => {
+  const d = jobs?.nearestDealer();
+  if (d && navi) navi.setTarget({ lane: d.l, s: d.s / 10, x: d.x / 10, y: d.y / 10, label: d.n });
+};
+garage.onClose = () => {
+  drive.input.enabled = mode === 'drive' && !menu?.open;
+  jobs?.garageClosed();
+};
+function openGarage(dealer: string | null) {
+  drive.input.enabled = false;
+  drive.car.vx = drive.car.vy = 0;
+  garage.show(dealer);
+}
 let menu: StartMenu | null = null;
 view.scene.add(trafficView.group, trafficView.group3d);
 drive.onView3D = (on) => {
@@ -35,10 +82,10 @@ drive.onView3D = (on) => {
 view.onTileLoaded = (t) => traffic.graph.addTile(t);
 drive.traffic = traffic;
 drive.onTeleport = () => traffic.clear();
-drive.onImpact = (speed) => missions?.onCrash(speed);
+drive.onImpact = (speed) => jobs?.onCrash(speed);
 traffic.onEvent = (e) => {
   if (e.type === 'red_light') {
-    missions?.onRedLight();
+    jobs?.onRedLight();
     drive.hud.message('Rote Ampel überfahren!', 2);
     drive.hud.setViolations(traffic.events.filter((x) => x.type === 'red_light').length);
   }
@@ -96,10 +143,10 @@ window.addEventListener('keydown', (e) => {
   if (e.code === 'KeyK') setMode(mode === 'drive' ? 'map' : 'drive');
   if (e.code === 'KeyO') openMenu(true);
   if (mode !== 'drive') return;
-  if (e.code === 'Digit1' || e.code === 'Numpad1') missions ? missions.startDuty('taxi') : drive.hud.message('Navigation lädt noch …', 1.5);
-  if (e.code === 'Digit2' || e.code === 'Numpad2') missions ? missions.startDuty('courier') : drive.hud.message('Navigation lädt noch …', 1.5);
+  if (garage.open) return;
+  if (e.code === 'KeyG') openGarage(null);
   if (e.code === 'KeyX') {
-    if (missions?.onDuty || missions?.job) missions.endDuty();
+    if (jobs?.job) jobs.cancel();
     else if (navi?.active) {
       navi.setTarget(null);
       drive.hud.message('Navigation beendet', 1.2);
@@ -167,7 +214,7 @@ async function main() {
   if (h?.map) view.focus(h.x, h.y, h.mpp);
   menu = new StartMenu(places);
   menu.onChoose = (c) => {
-    missions?.endDuty();
+    jobs?.cancel();
     navi?.setTarget(null);
     traffic.clear();
     drive.requestSpawn(c.x, c.y);
@@ -187,8 +234,16 @@ async function main() {
   loadNavData(`${import.meta.env.BASE_URL}world`)
     .then((data) => {
       navi = new Navigator(view, drive.car, data);
-      missions = new Missions(data, navi, drive.car, missionUi, drive.hud, () => view.time);
-      Object.assign(window as object, { navi, missions });
+      jobs = new JobSystem(data, data.bus, navi, drive.car, missionUi, drive.hud, profile, markers, view.scene, () => view.time, {
+        setCar: (id, color) => {
+          const m = carById(id);
+          drive.setCar(m.spec, color, m.body);
+        },
+        restoreCar: () => applyOwnCar(),
+        openGarage: (dealer) => openGarage(dealer),
+        money: () => missionUi.setMoney(profile.money),
+      }, () => drive.view3D);
+      Object.assign(window as object, { navi, jobs, profile, garage });
     })
     .catch((e) => console.error('Navigationsdaten', e));
 
@@ -202,7 +257,8 @@ async function main() {
     if (drive.spawnedOk) traffic.update(dt);
     trafficView.update(traffic.vehicles);
     navi?.update(dt);
-    missions?.update(dt);
+    jobs?.update(dt, mode === 'drive' && !garage.open && !menu?.open);
+    markers.setVisible(mode === 'drive');
     view.render();
     if (mode === 'drive') {
       // Minikarte unten links (CSS-Pixel, Ursprung unten links)
