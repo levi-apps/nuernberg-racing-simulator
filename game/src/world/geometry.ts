@@ -35,6 +35,106 @@ export class FillBuilder {
     for (const t of tris) this.idx.push(base + t);
   }
 
+  /** Polygon in Metern (Punktliste) */
+  addM(ring: Array<[number, number]>, color: number, z = 0): void {
+    if (ring.length < 3) return;
+    const coords: number[] = [];
+    for (const [x, y] of ring) coords.push(x, y);
+    const tris = earcut(coords, undefined, 2);
+    const base = this.pos.length / 3;
+    tmp.setHex(color);
+    for (const [x, y] of ring) {
+      this.pos.push(x, y, z);
+      this.col.push(tmp.r, tmp.g, tmp.b);
+    }
+    for (const t of tris) this.idx.push(base + t);
+  }
+
+  /** Dreieck mit Farbe je Ecke */
+  tri(ax: number, ay: number, bx: number, by: number, cx: number, cy: number, ca: number, cb = ca, cc = ca): void {
+    const base = this.pos.length / 3;
+    this.pos.push(ax, ay, 0, bx, by, 0, cx, cy, 0);
+    for (const c of [ca, cb, cc]) {
+      tmp.setHex(c);
+      this.col.push(tmp.r, tmp.g, tmp.b);
+    }
+    this.idx.push(base, base + 1, base + 2);
+  }
+
+  /** Band entlang einer Polylinie (Meter), seitlich versetzt um offset (links +) */
+  ribbon(pts: Array<[number, number]>, width: number, color: number, offset = 0): void {
+    const n = pts.length;
+    if (n < 2) return;
+    const hw = width / 2;
+    const base = this.pos.length / 3;
+    tmp.setHex(color);
+    for (let i = 0; i < n; i++) {
+      // Gehrung: Mittel der Normalen der angrenzenden Stücke
+      let nx = 0;
+      let ny = 0;
+      if (i > 0) {
+        const dx = pts[i][0] - pts[i - 1][0];
+        const dy = pts[i][1] - pts[i - 1][1];
+        const l = Math.hypot(dx, dy) || 1;
+        nx += -dy / l;
+        ny += dx / l;
+      }
+      if (i < n - 1) {
+        const dx = pts[i + 1][0] - pts[i][0];
+        const dy = pts[i + 1][1] - pts[i][1];
+        const l = Math.hypot(dx, dy) || 1;
+        nx += -dy / l;
+        ny += dx / l;
+      }
+      const l = Math.hypot(nx, ny) || 1;
+      nx /= l;
+      ny /= l;
+      // Gehrungslänge begrenzen
+      let k = 1;
+      if (i > 0 && i < n - 1) {
+        const dx = pts[i + 1][0] - pts[i][0];
+        const dy = pts[i + 1][1] - pts[i][1];
+        const ll = Math.hypot(dx, dy) || 1;
+        const c = (-dy / ll) * nx + (dx / ll) * ny;
+        k = 1 / Math.max(0.4, c);
+      }
+      const x = pts[i][0] + nx * offset;
+      const y = pts[i][1] + ny * offset;
+      this.pos.push(x + nx * hw * k, y + ny * hw * k, 0, x - nx * hw * k, y - ny * hw * k, 0);
+      this.col.push(tmp.r, tmp.g, tmp.b, tmp.r, tmp.g, tmp.b);
+    }
+    for (let i = 0; i < n - 1; i++) {
+      const a = base + i * 2;
+      this.idx.push(a, a + 1, a + 2, a + 2, a + 1, a + 3);
+    }
+  }
+
+  /** Gestricheltes Band (Strich/Lücke in m) */
+  dashed(pts: Array<[number, number]>, width: number, color: number, on: number, off: number): void {
+    const cum = [0];
+    for (let i = 1; i < pts.length; i++) cum.push(cum[i - 1] + Math.hypot(pts[i][0] - pts[i - 1][0], pts[i][1] - pts[i - 1][1]));
+    const L = cum[cum.length - 1];
+    for (let s0 = 0; s0 < L; s0 += on + off) {
+      const part = slicePts(pts, cum, s0, Math.min(L, s0 + on));
+      if (part.length >= 2) this.ribbon(part, width, color);
+    }
+  }
+
+  /** Kreisscheibe mit Verlauf: Mitte (versetzt) heller, Rand dunkler */
+  disc(x: number, y: number, r: number, inner: number, outer: number, seg = 14, cx = x, cy = y): void {
+    const base = this.pos.length / 3;
+    tmp.setHex(inner);
+    this.pos.push(cx, cy, 0);
+    this.col.push(tmp.r, tmp.g, tmp.b);
+    tmp.setHex(outer);
+    for (let i = 0; i < seg; i++) {
+      const a = (i / seg) * Math.PI * 2;
+      this.pos.push(x + Math.cos(a) * r, y + Math.sin(a) * r, 0);
+      this.col.push(tmp.r, tmp.g, tmp.b);
+    }
+    for (let i = 0; i < seg; i++) this.idx.push(base, base + 1 + i, base + 1 + ((i + 1) % seg));
+  }
+
   get empty(): boolean {
     return this.idx.length === 0;
   }
@@ -46,6 +146,13 @@ export class FillBuilder {
     g.setIndex(this.pos.length / 3 > 65535 ? new THREE.Uint32BufferAttribute(this.idx, 1) : new THREE.Uint16BufferAttribute(this.idx, 1));
     return g;
   }
+}
+
+/** dm-Array -> Punktliste in Metern */
+export function toM(flat: number[]): Array<[number, number]> {
+  const out: Array<[number, number]> = [];
+  for (let i = 0; i < flat.length; i += 2) out.push([flat[i] / 10, flat[i + 1] / 10]);
+  return out;
 }
 
 /** Sammelt Linienzüge als LineSegments (Vertex-Farben), optional gestrichelt. */
@@ -195,4 +302,21 @@ export function setSlotColor(attr: THREE.BufferAttribute, slot: { start: number;
     a[slot.start + i * 3 + 1] = tmp.g;
     a[slot.start + i * 3 + 2] = tmp.b;
   }
+}
+
+/** Teilstück einer Polylinie zwischen den Bogenlängen s0 und s1 */
+export function slicePts(pts: Array<[number, number]>, cum: number[], s0: number, s1: number): Array<[number, number]> {
+  const out: Array<[number, number]> = [];
+  for (let i = 1; i < pts.length; i++) {
+    const a = cum[i - 1];
+    const b = cum[i];
+    if (b < s0 || a > s1 || b === a) continue;
+    const t0 = Math.max(0, (s0 - a) / (b - a));
+    const t1 = Math.min(1, (s1 - a) / (b - a));
+    const [ax, ay] = pts[i - 1];
+    const [bx, by] = pts[i];
+    if (!out.length) out.push([ax + (bx - ax) * t0, ay + (by - ay) * t0]);
+    out.push([ax + (bx - ax) * t1, ay + (by - ay) * t1]);
+  }
+  return out;
 }

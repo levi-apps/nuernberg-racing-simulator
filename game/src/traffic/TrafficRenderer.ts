@@ -5,6 +5,7 @@ import * as THREE from 'three';
 import type { Vehicle } from './TrafficSim.ts';
 
 const MAX = 320;
+const WHITE = new THREE.Color(0xffffff);
 
 const mat = (opacity = 1) =>
   new THREE.MeshBasicMaterial({ color: 0xffffff, transparent: true, opacity, depthTest: false, depthWrite: false, side: THREE.DoubleSide });
@@ -31,6 +32,7 @@ export class TrafficRenderer {
   private body: THREE.InstancedMesh;
   private glass: THREE.InstancedMesh;
   private lights: THREE.InstancedMesh;
+  private roof: THREE.InstancedMesh;
   private m = new THREE.Matrix4();
   private q = new THREE.Quaternion();
   private p = new THREE.Vector3();
@@ -51,10 +53,11 @@ export class TrafficRenderer {
     };
     this.shadow = mk(unitRounded(0.2), new THREE.MeshBasicMaterial({ color: 0x000000, transparent: true, opacity: 0.2, depthTest: false, depthWrite: false }), 18);
     this.body = mk(unitRounded(0.12), mat(), 19);
+    this.roof = mk(unitRounded(0.2), mat(), 19.3);
     this.glass = mk(new THREE.PlaneGeometry(1, 1), mat(), 19.5, MAX * 2);
     this.lights = mk(new THREE.PlaneGeometry(1, 1), mat(), 19.6, MAX * 2);
     // Instanzfarben anlegen
-    for (const im of [this.body, this.glass, this.lights]) im.setColorAt(0, this.c.set(0xffffff));
+    for (const im of [this.body, this.glass, this.lights, this.roof]) im.setColorAt(0, this.c.set(0xffffff));
   }
 
   private set(im: THREE.InstancedMesh, i: number, x: number, y: number, hdg: number, lx: number, ly: number, ox: number, oy: number) {
@@ -78,6 +81,12 @@ export class TrafficRenderer {
       this.set(this.shadow, i, v.x, v.y, v.hdg, L + 0.25, W + 0.25, -0.2, -0.25);
       this.set(this.body, i, v.x, v.y, v.hdg, L, W, 0, 0);
       this.body.setColorAt(i, this.c.setHex(v.crashed > 0 ? 0x777777 : v.color));
+      // Dach: etwas heller als die Karosserie (Bus: hellgrau mit Klimaanlage-Andeutung)
+      if (v.type === 'bus') this.set(this.roof, i, v.x, v.y, v.hdg, L * 0.25, W * 0.6, -L * 0.1, 0);
+      else this.set(this.roof, i, v.x, v.y, v.hdg, L * (v.type === 'van' ? 0.5 : 0.36), W * 0.74, v.type === 'van' ? -L * 0.12 : -L * 0.07, 0);
+      this.c.setHex(v.type === 'bus' ? 0xd9d9d9 : v.color);
+      if (v.type !== 'bus') this.c.lerp(WHITE, 0.14);
+      this.roof.setColorAt(i, this.c);
       if (v.type === 'bus') {
         // Fensterband
         this.set(this.glass, gi, v.x, v.y, v.hdg, L * 0.86, W * 0.78, L * 0.02, 0);
@@ -100,9 +109,10 @@ export class TrafficRenderer {
     }
     this.shadow.count = n;
     this.body.count = n;
+    this.roof.count = n;
     this.glass.count = gi;
     this.lights.count = li;
-    for (const im of [this.shadow, this.body, this.glass, this.lights]) {
+    for (const im of [this.shadow, this.body, this.roof, this.glass, this.lights]) {
       im.instanceMatrix.needsUpdate = true;
       if (im.instanceColor) im.instanceColor.needsUpdate = true;
     }

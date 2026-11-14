@@ -17,6 +17,7 @@ import {
   type Marking,
   type Overview,
   type Place,
+  type Paint,
   type RoadLabel,
   type RoadSurface,
   type SignalHead,
@@ -26,7 +27,7 @@ import { bboxOf, simplify, slicePolyline, polylineLength, type BBox, type Pt } f
 import type { Extract } from './extract.ts';
 import type { RoadNet } from './roadnet.ts';
 import type { Control } from './control.ts';
-import type { MarkingObj, SurfaceObj } from './surfaces.ts';
+import type { MarkingObj, PaintObj, SurfaceObj } from './surfaces.ts';
 import { ORIGIN_LONLAT, ORIGIN_UTM } from './geo.ts';
 import { RANK } from './tags.ts';
 
@@ -45,7 +46,7 @@ class TileSet {
     const k = tileKey(tx, ty);
     let t = this.tiles.get(k);
     if (!t) {
-      t = { v: FORMAT_VERSION, tx, ty, surfaces: [], markings: [], lanes: [], connectors: [], signals: [], buildings: [], areas: [], lines: [], labels: [] };
+      t = { v: FORMAT_VERSION, tx, ty, surfaces: [], markings: [], lanes: [], connectors: [], signals: [], buildings: [], areas: [], lines: [], labels: [], paint: [], trees: [] };
       this.tiles.set(k, t);
     }
     return t;
@@ -89,6 +90,7 @@ export function writeWorld(
   ctl: Control,
   surfaces: SurfaceObj[],
   markings: MarkingObj[],
+  paint: PaintObj[],
   mainNet: Uint8Array,
   log: (s: string) => void,
 ): void {
@@ -98,7 +100,17 @@ export function writeWorld(
     const r: RoadSurface = { id: s.id, k: s.k, cls: s.cls, layer: s.layer, ring: flat(s.ring) };
     if (s.bridge) r.bridge = 1;
     if (s.tunnel) r.tunnel = 1;
-    ts.each(bboxOf(s.ring), (t) => t.surfaces.push(r));
+    if (s.sw) r.sw = flat(s.sw);
+    if (s.kerbs.length) r.kerbs = s.kerbs.filter((k) => k.length >= 2).map(flat);
+    ts.each(bboxOf(s.sw ?? s.ring), (t) => t.surfaces.push(r));
+  }
+  for (const pt of paint) {
+    const pp: Paint = { k: pt.k, layer: pt.layer, ring: flat(pt.ring) };
+    ts.each(bboxOf(pt.ring), (t) => t.paint!.push(pp));
+  }
+  for (const [x, y, r] of ex.trees) {
+    const t = ts.get(Math.floor(x / TILE_SIZE), Math.floor(y / TILE_SIZE));
+    t.trees!.push(dm(x), dm(y), dm(r));
   }
   for (const m of markings) {
     for (const part of chunks(m.pts, 120)) {
@@ -170,6 +182,8 @@ export function writeWorld(
   }
   for (const b of ex.buildings) {
     const bd: Building = { id: b.id, h: Math.round(b.h * 10) / 10, t: b.t, outer: flat(b.outer) };
+    if (b.rs) bd.rs = b.rs;
+    if (b.rc !== undefined) bd.rc = b.rc;
     if (b.minH) bd.minH = b.minH;
     if (b.holes.length) bd.holes = b.holes.map(flat);
     if (b.name) bd.name = b.name;

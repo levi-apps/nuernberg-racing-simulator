@@ -46,6 +46,19 @@ Gamepads werden mit der Standardbelegung unterstützt: RT Gas, LT Bremse, linker
 - Unten im HUD stehen Straßenname und Tempolimit. Bei mehr als 5 km/h über dem Limit blinkt das Schild (noch ohne Folgen).
 - Kacheln werden beim Fahren um das Auto herum nachgeladen. Solange die Umgebung fehlt, steht die Physik kurz still.
 
+## Optik
+
+Die Welt wird als realistische Draufsicht gezeichnet. Alle Texturen sind prozedural (Shader in `game/src/world/materials.ts`), es gibt also keine Bilddateien.
+
+- **Straßen:** Asphalt mit Korn und ausgebesserten Stellen, Gehwege mit Pflaster und hellem Bordstein, abgerundete Kreuzungsecken.
+- **Markierungen:** weiß und in echter Breite, Leitlinien gestrichelt (3 m Strich, 6 m Lücke), Haltelinien, Zebrastreifen, Fußgängerfurten an Ampeln und Abbiegepfeile aus `turn:lanes`.
+- **Brücken:** mit Geländer und Schatten.
+- **Gleise:** Schotterbett und zwei Schienen; Straßenbahnschienen liegen in der Fahrbahn.
+- **Wege und Grenzen:** Fuß- und Radwege (Radwege rot), Hecken, Mauern (Stadtmauer breit) und Zäune.
+- **Gebäude:** Dächer in Ziegelrot, Schiefergrau oder Kupfergrün, aus `roof:colour` oder je nach Gebäudeart. Satteldächer bekommen einen First, Walmdächer Dachflächen, verwinkelte Steildächer schräge Ränder. Flachdächer haben eine helle Attika. Schatten richten sich nach der Gebäudehöhe (Sonne aus Südwesten).
+- **Bäume:** Einzelbäume und Baumreihen aus OSM mit Kronen und Schatten. Wälder, Rasen und Wasser haben eigene Muster, das Wasser bewegt sich langsam.
+- **Ampeln:** Mast am Fahrbahnrand, bei breiten Zufahrten mit Ausleger über die Spuren, leuchtende Lampe mit Schein auf der Fahrbahn.
+
 ## Aufträge und Navigation
 
 - **Taxi (Taste 1):** Ein Fahrgast wartet an einer echten Adresse in der Nähe. Fahr hin und halte neben dem gelben Ring an (unter 4 km/h). Dann geht es zum Wunschziel: einer Adresse oder einem Ort wie Hotel, Bahnhof, Museum oder Restaurant. Der Fahrpreis beträgt 4,90 € plus 2,50 € pro km (Spielwerte). Für eine zügige Fahrt gibt es bis zu 20 % Trinkgeld; jeder Unfall und jede rote Ampel kostet 10 %.

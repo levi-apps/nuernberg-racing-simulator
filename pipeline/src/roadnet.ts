@@ -20,7 +20,7 @@ import {
   type Pt,
 } from './geo.ts';
 import type { Extract, RawRestriction, RawRoad } from './extract.ts';
-import { laneSpec, laneWidth, layerOf, maxSpeed, oneway, RANK } from './tags.ts';
+import { laneSpec, laneWidth, layerOf, maxSpeed, oneway, RANK, sidewalks } from './tags.ts';
 
 export interface Segment {
   id: number;
@@ -44,6 +44,9 @@ export interface Segment {
   vmax: number;
   leftW: number; // Breite links der Mittellinie (bezogen auf a->b)
   rightW: number;
+  /** Gehwegbreiten links/rechts (a->b) */
+  swL: number;
+  swR: number;
   trimA: number;
   trimB: number;
   trimmed: Pt[];
@@ -63,6 +66,9 @@ export interface SegEnd {
   /** Breiten links/rechts relativ zur Richtung vom Knoten weg */
   lw: number;
   rw: number;
+  /** Gehwegbreiten links/rechts relativ zur Richtung vom Knoten weg */
+  slw: number;
+  srw: number;
 }
 
 export interface GNode {
@@ -103,6 +109,10 @@ export interface JunctionSurface {
   id: number;
   node: GNode;
   ring: Pt[];
+  /** Umriss inklusive Gehwegen */
+  swRing: Pt[];
+  /** Bordsteinkanten an den Ecken (Polylinien) */
+  kerbs: Pt[][];
   cls: RoadClass;
   layer: number;
 }
@@ -165,6 +175,7 @@ export function buildRoadNet(ex: Extract, log: (s: string) => void): RoadNet {
     const vmax = maxSpeed(r.tags, r.cls);
     const layer = layerOf(r.tags);
     const roundabout = r.tags.junction === 'roundabout' || r.tags.junction === 'circular';
+    const [swL, swR] = sidewalks(r.tags, r.cls);
     const prioBoost = r.tags.priority_road === 'designated' || r.tags.priority_road === 'yes_unposted' ? 0.5 : 0;
     let start = 0;
     const n = r.nodes.length;
@@ -202,6 +213,8 @@ export function buildRoadNet(ex: Extract, log: (s: string) => void): RoadNet {
         vmax,
         leftW: oneDir ? width / 2 : spec.bwd * w,
         rightW: oneDir ? width / 2 : spec.fwd * w,
+        swL,
+        swR,
         trimA: 0,
         trimB: 0,
         trimmed: pts,
@@ -229,7 +242,16 @@ export function buildRoadNet(ex: Extract, log: (s: string) => void): RoadNet {
       const outward = atA ? s.pts : s.pts.slice().reverse();
       const dir = startDirection(outward, 6);
       const g = getNode(atA ? s.a : s.b, outward[0]);
-      g.ends.push({ seg: s, atA, dir, angle: angleOf(dir), lw: atA ? s.leftW : s.rightW, rw: atA ? s.rightW : s.leftW });
+      g.ends.push({
+        seg: s,
+        atA,
+        dir,
+        angle: angleOf(dir),
+        lw: atA ? s.leftW : s.rightW,
+        rw: atA ? s.rightW : s.leftW,
+        slw: atA ? s.swL : s.swR,
+        srw: atA ? s.swR : s.swL,
+      });
     }
   }
   for (const g of nodes.values()) g.ends.sort((x, y) => x.angle - y.angle);
@@ -289,16 +311,39 @@ export function buildRoadNet(ex: Extract, log: (s: string) => void): RoadNet {
   for (const g of nodes.values()) {
     if (g.ends.length < 2) continue;
     const ring: Pt[] = [];
+    const swRing: Pt[] = [];
+    const kerbs: Pt[][] = [];
     let cls: RoadClass = g.ends[0].seg.cls;
     let best = -1;
     let layer = 0;
-    for (const e of g.ends) {
+    // Eckpunkte je Ende: rechts/links an der Schnittkante, für Fahrbahn und Gehweg
+    const corners = g.ends.map((e) => {
       const outward = e.atA ? e.seg.trimmed : e.seg.trimmed.slice().reverse();
       const p = outward[0];
       const d = startDirection(outward, 3);
       const ln = leftNormal(d);
-      ring.push([p[0] - ln[0] * e.rw, p[1] - ln[1] * e.rw]);
-      ring.push([p[0] + ln[0] * e.lw, p[1] + ln[1] * e.lw]);
+      return {
+        e,
+        R: [p[0] - ln[0] * e.rw, p[1] - ln[1] * e.rw] as Pt,
+        L: [p[0] + ln[0] * e.lw, p[1] + ln[1] * e.lw] as Pt,
+        sR: [p[0] - ln[0] * (e.rw + e.srw), p[1] - ln[1] * (e.rw + e.srw)] as Pt,
+        sL: [p[0] + ln[0] * (e.lw + e.slw), p[1] + ln[1] * (e.lw + e.slw)] as Pt,
+      };
+    });
+    const nE = corners.length;
+    for (let i = 0; i < nE; i++) {
+      const c = corners[i];
+      const nx = corners[(i + 1) % nE];
+      ring.push(c.R, c.L);
+      swRing.push(c.sR, c.sL);
+      {
+        // abgerundete Ecke zwischen linkem Rand von c und rechtem Rand des nächsten Endes
+        const curve = cornerCurve(g.p, c.e, nx.e, c.L, nx.R, c.e.lw, nx.e.rw);
+        ring.push(...curve);
+        kerbs.push([c.L, ...curve, nx.R]);
+        swRing.push(...cornerCurve(g.p, c.e, nx.e, c.sL, nx.sR, c.e.lw + c.e.slw, nx.e.rw + nx.e.srw));
+      }
+      const e = c.e;
       if (e.seg.rank > best) {
         best = e.seg.rank;
         cls = e.seg.cls;
@@ -306,7 +351,7 @@ export function buildRoadNet(ex: Extract, log: (s: string) => void): RoadNet {
       layer = Math.max(layer, e.seg.layer);
     }
     if (Math.abs(ringArea(ring)) < 0.5) continue;
-    junctions.push({ id: 10_000_000 + g.idx, node: g, ring, cls, layer: g.ends.every((e) => e.seg.layer < 0) ? Math.max(...g.ends.map((e) => e.seg.layer)) : layer });
+    junctions.push({ id: 10_000_000 + g.idx, node: g, ring, swRing, kerbs, cls, layer: g.ends.every((e) => e.seg.layer < 0) ? Math.max(...g.ends.map((e) => e.seg.layer)) : layer });
   }
 
   // 7) Verbinder
@@ -373,6 +418,34 @@ function computeTrims(g: GNode): void {
     if (e.atA) e.seg.trimA = Math.max(e.seg.trimA, t);
     else e.seg.trimB = Math.max(e.seg.trimB, t);
   }
+}
+
+/**
+ * Abgerundete Ecke zwischen zwei benachbarten Straßenenden: quadratische Kurve von A nach B,
+ * Kontrollpunkt = Schnittpunkt der beiden Fahrbahnränder. Liefert die Zwischenpunkte.
+ */
+function cornerCurve(node: Pt, s: SegEnd, t: SegEnd, A: Pt, B: Pt, ws: number, wt: number): Pt[] {
+  const Ls = leftNormal(s.dir);
+  const Rt: Pt = [t.dir[1], -t.dir[0]];
+  const rhs: Pt = [Rt[0] * wt - Ls[0] * ws, Rt[1] * wt - Ls[1] * ws];
+  const det = cross(s.dir, [-t.dir[0], -t.dir[1]]);
+  if (Math.abs(det) < 0.2) return [];
+  const u = cross(rhs, [-t.dir[0], -t.dir[1]]) / det;
+  const v = cross(s.dir, rhs) / det;
+  if (u <= 0 || v <= 0) return [];
+  const C: Pt = [node[0] + Ls[0] * ws + s.dir[0] * u, node[1] + Ls[1] * ws + s.dir[1] * u];
+  // Kontrollpunkt darf nicht weiter weg liegen als die Schnittkanten (sonst Ausreißer)
+  if (dist(C, A) > dist(A, B) * 1.5 + 2 || dist(C, B) > dist(A, B) * 1.5 + 2) return [];
+  const out: Pt[] = [];
+  const n = 6;
+  for (let k = 1; k < n; k++) {
+    const q = k / n;
+    const a = (1 - q) * (1 - q);
+    const b = 2 * (1 - q) * q;
+    const c = q * q;
+    out.push([a * A[0] + b * C[0] + c * B[0], a * A[1] + b * C[1] + c * B[1]]);
+  }
+  return out;
 }
 
 function lanesInto(e: SegEnd): number {

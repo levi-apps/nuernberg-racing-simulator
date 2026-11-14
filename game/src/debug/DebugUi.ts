@@ -13,10 +13,12 @@ const LAYER_LABELS: Array<[LayerName, string]> = [
   ['paths', 'Fuß- und Radwege'],
   ['rail', 'Gleise / Straßenbahn'],
   ['buildings', 'Gebäude'],
+  ['trees', 'Bäume'],
   ['lanes', 'Fahrspuren'],
   ['connectors', 'Spurverbinder'],
   ['controls', 'Vorfahrt / Stopp'],
   ['signals', 'Ampeln'],
+  ['signalStops', 'Ampel-Haltepunkte'],
   ['grid', 'Kachelraster'],
 ];
 

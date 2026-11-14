@@ -18,7 +18,8 @@ import {
 } from '@nrs/shared';
 import { FillBuilder, LineBuilder, setSlotColor } from './geometry.ts';
 import { MATERIALS, ORDER, RL_MAIN, RL_MINI, TileView, type LayerName } from './TileView.ts';
-import { AREA_COLORS, BACKGROUND, ROAD_COLORS, SIGNAL_COLORS, TURN_COLORS } from './style.ts';
+import { AREA_COLORS, AREA_PATTERN, BACKGROUND, OVERVIEW_COLORS, TURN_COLORS } from './style.ts';
+import { Pat, shared, surfaceMat } from './materials.ts';
 
 /** Ab dieser Auflösung (m pro Pixel) werden Kacheln geladen, darüber nur die Übersicht. */
 const TILE_MPP = 2.6;
@@ -67,10 +68,12 @@ export class WorldView {
     paths: true,
     rail: true,
     buildings: true,
+    trees: true,
     lanes: true,
     connectors: true,
     controls: true,
     signals: true,
+    signalStops: true,
     grid: false,
   };
   private frame = 0;
@@ -130,12 +133,13 @@ export class WorldView {
     r.setScissorTest(true);
     r.setScissor(rx, ry, rw, rh);
     r.setViewport(rx, ry, rw, rh);
-    r.setClearColor(0xe9e4d8);
     r.clear();
+    const mppMain = shared.uMpp.value;
+    shared.uMpp.value = mpp;
     r.render(this.scene, cam);
+    shared.uMpp.value = mppMain;
     r.setScissorTest(false);
     r.setViewport(0, 0, this.canvas.clientWidth, this.canvas.clientHeight);
-    r.setClearColor(BACKGROUND);
     let i = 0;
     for (const v of this.views.values()) v.group.visible = vis[i++];
     this.overview.visible = ovVis;
@@ -159,15 +163,22 @@ export class WorldView {
     for (const c of signals.controllers) this.controllers.set(c.id, c);
     this.bigAreaData = areas.areas;
 
-    const fb = new FillBuilder();
-    for (const a of areas.areas) fb.add(a.outer, a.holes, AREA_COLORS[a.k]);
-    const am = new THREE.Mesh(fb.build(), MATERIALS.fill);
-    am.renderOrder = ORDER.areas;
-    am.frustumCulled = false;
-    this.bigAreas.add(am);
+    const byPat = new Map<Pat, FillBuilder>();
+    for (const a of areas.areas) {
+      const p = AREA_PATTERN[a.k];
+      let fb = byPat.get(p);
+      if (!fb) byPat.set(p, (fb = new FillBuilder()));
+      fb.add(a.outer, a.holes, AREA_COLORS[a.k]);
+    }
+    for (const [p, fb] of byPat) {
+      const am = new THREE.Mesh(fb.build(), surfaceMat(p));
+      am.renderOrder = p === Pat.Water ? ORDER.water - 0.05 : ORDER.areas - 0.05;
+      am.frustumCulled = false;
+      this.bigAreas.add(am);
+    }
 
     const lb = new LineBuilder();
-    for (const r of overview.roads) lb.add(r.pts, ROAD_COLORS[r.cls] === 0xffffff ? 0x9a9a9a : darken(ROAD_COLORS[r.cls]));
+    for (const r of overview.roads) lb.add(r.pts, OVERVIEW_COLORS[r.cls]);
     const ov = new THREE.LineSegments(lb.build(), MATERIALS.line);
     ov.renderOrder = ORDER.roads;
     ov.frustumCulled = false;
@@ -227,7 +238,7 @@ export class WorldView {
   private applyLayers(v: TileView) {
     const detail = this.mpp < DETAIL_MPP;
     for (const [k, vis] of Object.entries(this.layerVisible) as Array<[LayerName, boolean]>) {
-      const debugOnly = k === 'lanes' || k === 'connectors' || k === 'controls' || k === 'grid';
+      const debugOnly = k === 'lanes' || k === 'connectors' || k === 'controls' || k === 'grid' || k === 'signalStops';
       const needsDetail = debugOnly || k === 'signals';
       let show = vis && (!needsDetail || detail);
       if (this.mode === 'drive' && debugOnly) show = false;
@@ -365,6 +376,8 @@ export class WorldView {
     this.camera.updateProjectionMatrix();
     this.updateTiles();
     if (this.frame % 6 === 0) this.updateSignals();
+    shared.uMpp.value = this.mpp;
+    shared.uTime.value = this.time;
     this.renderer.clear();
     this.renderer.render(this.scene, this.camera);
   }
@@ -373,13 +386,15 @@ export class WorldView {
     if (this.mpp >= DETAIL_MPP) return;
     const t = this.time;
     for (const v of this.views.values()) {
-      if (!v.group.visible || !v.signalAttr) continue;
-      for (const s of v.signalSlots) {
-        const c = this.controllers.get(s.ctrl);
-        if (!c) continue;
-        setSlotColor(v.signalAttr, s.slot, SIGNAL_COLORS[signalState(c, s.grp, t)]);
+      if (!v.group.visible) continue;
+      for (const g of v.signalGroups) {
+        for (const s of g.slots) {
+          const c = this.controllers.get(s.ctrl);
+          if (!c) continue;
+          setSlotColor(g.attr, s.slot, g.palette[signalState(c, s.grp, t)]);
+        }
+        g.attr.needsUpdate = true;
       }
-      v.signalAttr.needsUpdate = true;
     }
   }
 
@@ -487,11 +502,6 @@ export class WorldView {
   }
 }
 
-function darken(c: number): number {
-  const col = new THREE.Color(c);
-  col.multiplyScalar(0.75);
-  return col.getHex();
-}
 
 /** Abstand eines Punkts zu einer Polylinie (dm-Koordinaten) und Bogenlänge des Lotfußpunkts in m */
 export function projectOnPolyline(pts: number[], x: number, y: number): { d: number; s: number; dir: [number, number] } {

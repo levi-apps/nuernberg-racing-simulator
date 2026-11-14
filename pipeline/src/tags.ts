@@ -297,7 +297,49 @@ export function lineKind(t: Tags): LineKind | null {
   if (rw === 'rail' || rw === 'light_rail' || rw === 'narrow_gauge') return t.tunnel === 'yes' ? null : 'rail';
   if (rw === 'tram') return 'tram';
   if (rw === 'subway') return null; // U-Bahn liegt im Tunnel – oben nicht sichtbar
+  if (t.barrier === 'hedge') return 'hedge';
+  if (t.barrier === 'city_wall' || t.historic === 'city_wall' || t.wall === 'city_wall') return 'citywall';
+  if (t.barrier === 'wall' || t.barrier === 'retaining_wall') return 'wall';
+  if (t.barrier === 'fence') return 'fence';
   if (t.waterway === 'river' || t.waterway === 'canal') return t.tunnel ? null : 'river';
   if (t.waterway === 'stream' || t.waterway === 'ditch' || t.waterway === 'drain') return t.tunnel ? null : 'stream';
   return null;
+}
+
+/** Gehwegbreiten links/rechts (bezogen auf die Digitalisierrichtung) in Metern */
+export function sidewalks(t: Tags, cls: RoadClass): [number, number] {
+  const def =
+    cls === 'primary' || cls === 'secondary' ? 3.0 : cls === 'tertiary' || cls === 'unclassified' || cls === 'residential' ? 2.4 : cls === 'living_street' ? 1.6 : 0;
+  if (/_link$/.test(t.highway ?? '') || cls === 'motorway' || cls === 'trunk' || cls === 'service' || cls === 'track') {
+    return [0, 0];
+  }
+  const val = (v: string | undefined): boolean | null => (v === undefined ? null : v !== 'no' && v !== 'none');
+  let l = val(t['sidewalk:left']);
+  let r = val(t['sidewalk:right']);
+  const both = t['sidewalk:both'];
+  if (both !== undefined) {
+    l ??= val(both);
+    r ??= val(both);
+  }
+  const sw = t.sidewalk;
+  if (sw !== undefined) {
+    if (sw === 'both' || sw === 'yes' || sw === 'separate') {
+      l ??= true;
+      r ??= true;
+    } else if (sw === 'left') {
+      l ??= true;
+      r ??= false;
+    } else if (sw === 'right') {
+      l ??= false;
+      r ??= true;
+    } else if (sw === 'no' || sw === 'none') {
+      l ??= false;
+      r ??= false;
+    }
+  }
+  // ohne Angabe: innerorts Gehwege auf beiden Seiten
+  l ??= def > 0;
+  r ??= def > 0;
+  const w = parseFloat(t['sidewalk:width'] ?? '') || def || 2.2;
+  return [l ? w : 0, r ? w : 0];
 }

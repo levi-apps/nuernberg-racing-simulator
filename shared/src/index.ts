@@ -62,6 +62,17 @@ export interface RoadSurface extends Identified {
   tunnel?: 1;
   /** Umriss als geschlossener Ring (dm) */
   ring: number[];
+  /** Umriss inklusive Gehwegen (dm); fehlt, wenn es keinen Gehweg gibt */
+  sw?: number[];
+  /** Bordstein-/Fahrbahnränder als Polylinien (dm) */
+  kerbs?: number[][];
+}
+
+/** Fahrbahnfarbe/Bodenmarkierung als Fläche (Zebrastreifen, Furten, Pfeile) */
+export interface Paint {
+  k: 'white' | 'yellow';
+  layer: number;
+  ring: number[];
 }
 
 export interface Marking {
@@ -139,6 +150,10 @@ export interface Building extends Identified {
   t: string;
   /** min_height (z. B. für Durchfahrten / Brückenbauten) */
   minH?: number;
+  /** Dachform (OSM roof:shape) */
+  rs?: string;
+  /** Dachfarbe (RGB) aus roof:colour */
+  rc?: number;
   outer: number[];
   holes?: number[][];
   name?: string;
@@ -165,7 +180,7 @@ export interface Area extends Identified {
   holes?: number[][];
 }
 
-export type LineKind = 'footway' | 'cycleway' | 'path' | 'steps' | 'rail' | 'tram' | 'subway' | 'river' | 'stream';
+export type LineKind = 'footway' | 'cycleway' | 'path' | 'steps' | 'rail' | 'tram' | 'subway' | 'river' | 'stream' | 'hedge' | 'wall' | 'citywall' | 'fence';
 
 export interface Line extends Identified {
   k: LineKind;
@@ -197,6 +212,9 @@ export interface Tile {
   areas: Area[];
   lines: Line[];
   labels?: RoadLabel[];
+  paint?: Paint[];
+  /** Bäume: flach [x, y, Kronenradius] in dm */
+  trees?: number[];
 }
 
 export interface SignalPhase {

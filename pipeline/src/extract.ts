@@ -32,6 +32,8 @@ export interface RawBuilding {
   t: string;
   h: number;
   minH?: number;
+  rs?: string;
+  rc?: number;
   outer: Pt[];
   holes: Pt[][];
   name?: string;
@@ -62,6 +64,8 @@ export interface Extract {
   areas: RawArea[];
   lines: RawLine[];
   places: Array<{ name: string; p: Pt; kind: string }>;
+  /** Bäume: [x, y, Kronenradius] */
+  trees: Array<[number, number, number]>;
   addresses: RawAddress[];
   pois: RawPoi[];
 }
@@ -145,6 +149,8 @@ export function extract(pbfPath: string, log: (s: string) => void): Extract {
   const controlNodes = new Map<number, RawPoint>();
   const placeNodes: Array<{ name: string; p: Pt; kind: string }> = [];
   const addrPts: RawAddress[] = [];
+  const treePts: Array<[number, number, number]> = [];
+  const treeRows: number[][] = [];
   const poiPts: RawPoi[] = [];
   type PW = { refs: number[]; tags: Tags };
   /** Wege (meist Gebäude) mit Adresse oder Name -> Mittelpunkt */
@@ -178,6 +184,10 @@ export function extract(pbfPath: string, log: (s: string) => void): Extract {
       nodes.push(id, x, y);
       if (tags) {
         if (isControl(tags)) controlNodes.set(id, { id, p: [x, y], tags });
+        if (tags.natural === 'tree') {
+          const dc = parseFloat(tags.diameter_crown ?? '');
+          treePts.push([x, y, Number.isFinite(dc) && dc > 1 && dc < 30 ? dc / 2 : 0]);
+        }
         if (tags['addr:housenumber'] && tags['addr:street']) addrPts.push({ street: tags['addr:street'], num: tags['addr:housenumber'], p: [x, y] });
         if (tags.name) {
           const pc = poiCat(tags);
@@ -189,6 +199,7 @@ export function extract(pbfPath: string, log: (s: string) => void): Extract {
     },
     way(id, refs, tags) {
       if ((tags['addr:housenumber'] && tags['addr:street']) || (tags.name && poiCat(tags))) tagWays.push({ refs, tags });
+      if (tags.natural === 'tree_row') treeRows.push(refs);
       if (roadClass(tags)) roadWays.push({ id, refs, tags });
       else if (tags.building && tags.building !== 'no') buildingWays.push({ id, refs, tags });
       else if (lineKind(tags)) lineWays.push({ id, refs, tags });
@@ -248,7 +259,7 @@ export function extract(pbfPath: string, log: (s: string) => void): Extract {
     if (!inside.contains(ringCentroid(outer))) return;
     if (tags.building === 'roof' || tags.location === 'underground') return;
     const { h, minH } = buildingHeight(tags);
-    buildings.push({ id, t: tags.building ?? 'yes', h, minH, outer, holes, name: tags.name });
+    buildings.push({ id, t: tags.building ?? 'yes', h, minH, outer, holes, name: tags.name, rs: tags['roof:shape'], rc: parseColour(tags['roof:colour'] ?? tags['building:roof:colour']) });
   };
   for (const w of buildingWays) {
     const r = resolve(w.refs);
@@ -343,8 +354,28 @@ export function extract(pbfPath: string, log: (s: string) => void): Extract {
   });
   log(`  ${addresses.length.toLocaleString('de')} Adressen, ${pois.length.toLocaleString('de')} benannte Orte`);
 
+  // Bäume: Einzelbäume und Baumreihen (alle ~8 m ein Baum)
+  const trees: Array<[number, number, number]> = treePts.filter((t) => inside.contains([t[0], t[1]]));
+  for (const refs of treeRows) {
+    const r = resolve(refs);
+    if (!r || !anyInside(r.pts)) continue;
+    let carry = 0;
+    for (let i = 1; i < r.pts.length; i++) {
+      const a = r.pts[i - 1];
+      const b = r.pts[i];
+      const l = Math.hypot(b[0] - a[0], b[1] - a[1]);
+      let s = carry;
+      while (s < l) {
+        trees.push([a[0] + ((b[0] - a[0]) * s) / l, a[1] + ((b[1] - a[1]) * s) / l, 0]);
+        s += 8;
+      }
+      carry = s - l;
+    }
+  }
+  log(`  ${trees.length.toLocaleString('de')} Bäume`);
+
   log(`  Im Stadtgebiet: ${roads.length.toLocaleString('de')} Straßen, ${buildings.length.toLocaleString('de')} Gebäude, ${areas.length.toLocaleString('de')} Flächen, ${lines.length.toLocaleString('de')} Linien`);
-  return { boundary, inside, roads, controlNodes, restrictions, buildings, areas, lines, places, addresses, pois };
+  return { boundary, inside, roads, controlNodes, restrictions, buildings, areas, lines, places, trees, addresses, pois };
 }
 
 function pointInRingSafe(p: Pt, ring: Pt[]): boolean {
@@ -355,4 +386,34 @@ function pointInRingSafe(p: Pt, ring: Pt[]): boolean {
     if (yi > p[1] !== yj > p[1] && p[0] < ((xj - xi) * (p[1] - yi)) / (yj - yi) + xi) inside = !inside;
   }
   return inside;
+}
+
+const NAMED_COLOURS: Record<string, number> = {
+  red: 0xa8473a,
+  darkred: 0x7f2f28,
+  brown: 0x7a4b36,
+  orange: 0xc06a3c,
+  grey: 0x8a8c8f,
+  gray: 0x8a8c8f,
+  darkgrey: 0x55585c,
+  darkgray: 0x55585c,
+  lightgrey: 0xb6b7b8,
+  lightgray: 0xb6b7b8,
+  silver: 0xb9bcc0,
+  black: 0x3a3c40,
+  white: 0xdedede,
+  green: 0x6f8f6a,
+  darkgreen: 0x4b6347,
+  blue: 0x5a6c86,
+  beige: 0xc9b99a,
+  yellow: 0xc9b25a,
+};
+
+/** roof:colour (Name oder #rrggbb) -> RGB */
+function parseColour(v: string | undefined): number | undefined {
+  if (!v) return undefined;
+  const s = v.trim().toLowerCase();
+  if (/^#[0-9a-f]{6}$/.test(s)) return parseInt(s.slice(1), 16);
+  if (/^#[0-9a-f]{3}$/.test(s)) return parseInt(s[1] + s[1] + s[2] + s[2] + s[3] + s[3], 16);
+  return NAMED_COLOURS[s.replace(/[\s_-]/g, '')];
 }
