@@ -1,0 +1,20 @@
+{
+  "name": "nuernberg-racing-simulator",
+  "private": true,
+  "type": "module",
+  "workspaces": [
+    "shared",
+    "pipeline",
+    "game"
+  ],
+  "scripts": {
+    "data:download": "npm -w pipeline run download",
+    "data:build": "npm -w pipeline run build",
+    "dev": "npm -w game run dev",
+    "build": "npm -w game run build",
+    "typecheck": "npm -w shared run typecheck && npm -w pipeline run typecheck && npm -w game run typecheck"
+  },
+  "engines": {
+    "node": ">=20"
+  }
+}

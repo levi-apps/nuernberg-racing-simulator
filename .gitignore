@@ -1,0 +1,12 @@
+node_modules/
+dist/
+.DS_Store
+*.log
+
+# OSM-Rohdaten und generierte Welt (werden lokal erzeugt)
+data/raw/
+data/work/
+game/public/world/
+
+# Debug-Screenshots
+screenshots/

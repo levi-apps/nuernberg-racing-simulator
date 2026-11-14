@@ -1,0 +1,36 @@
+<!doctype html>
+<html lang="de">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Nürnberg Racing Simulator – Karten-Debug</title>
+  </head>
+  <body>
+    <canvas id="map"></canvas>
+    <aside id="panel">
+      <h1>Nürnberg · Karten-Debug</h1>
+      <section>
+        <label for="place">Springen zu</label>
+        <select id="place"></select>
+      </section>
+      <section id="layers">
+        <h2>Ebenen</h2>
+      </section>
+      <section>
+        <h2>Legende</h2>
+        <div id="legend"></div>
+      </section>
+      <section>
+        <h2>Auswahl</h2>
+        <div id="inspector" class="muted">Auf eine Spur, einen Verbinder oder eine Ampel klicken.</div>
+      </section>
+      <section>
+        <h2>Status</h2>
+        <div id="status" class="muted"></div>
+      </section>
+    </aside>
+    <div id="hud"><span id="coords"></span></div>
+    <footer id="attribution">Kartendaten © <a href="https://www.openstreetmap.org/copyright" target="_blank" rel="noopener">OpenStreetMap-Mitwirkende</a> (ODbL)</footer>
+    <script type="module" src="/src/main.ts"></script>
+  </body>
+</html>
