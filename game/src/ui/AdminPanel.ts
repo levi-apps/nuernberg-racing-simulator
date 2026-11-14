@@ -1,5 +1,5 @@
 /**
- * Admin-Panel (Taste ^ oder F2): Geld, Autos und Tuning, Teleport zu jeder Straße / jedem Ort,
+ * Geheimes Admin-Panel (dreimal schnell in die obere rechte Ecke klicken/tippen): Geld, Autos und Tuning, Teleport zu jeder Straße / jedem Ort,
  * Fahrzeug-Cheats, Welt (Verkehr, Zeit), Jobs und Anzeige.
  */
 import type { Place } from '@nrs/shared';
@@ -72,16 +72,25 @@ export class AdminPanel {
     window.addEventListener(
       'keydown',
       (e) => {
-        const isToggle = e.code === 'F2' || e.key === '^' || e.key === '°' || (e.key === 'Dead' && (e.code === 'Backquote' || e.code === 'IntlBackslash'));
-        if (isToggle) {
-          e.preventDefault();
-          e.stopPropagation();
-          this.toggle();
-          return;
-        }
         if (this.open && e.code === 'Escape') this.toggle();
         // Eingaben im Panel nicht ans Spiel weitergeben
         if (this.open && e.target instanceof HTMLInputElement && this.root.contains(e.target)) e.stopPropagation();
+      },
+      true,
+    );
+    // geheimer Zugang: 3 Klicks/Tipps innerhalb von 2 s in die obere rechte Ecke (70 × 70 px)
+    let taps: number[] = [];
+    window.addEventListener(
+      'pointerdown',
+      (e) => {
+        if (this.open || e.clientX < window.innerWidth - 70 || e.clientY > 70) return;
+        // Zeitpunkt der Eingabe (nicht der Verarbeitung), damit es auch bei ruckelndem Spiel klappt
+        const now = e.timeStamp;
+        taps = [...taps.filter((t) => now - t < 2000), now];
+        if (taps.length >= 3) {
+          taps = [];
+          this.toggle();
+        }
       },
       true,
     );
@@ -116,7 +125,7 @@ export class AdminPanel {
     const tabs = TABS.map(([k, l]) => `<button data-tab="${k}" class="${k === this.tab ? 'on' : ''}">${l}</button>`).join('');
     this.root.innerHTML = `<div class="a-head"><b>Admin-Panel</b><span>${formatEuro(this.ctx.profile.money)}</span><button data-act="close">✕</button></div>
       <div class="a-tabs">${tabs}</div><div class="a-body">${this.body()}</div>
-      <div class="a-foot"><b>^</b> / <b>F2</b> schließt · nur für deinen eigenen Spielstand</div>`;
+      <div class="a-foot"><b>✕</b> oder <b>Esc</b> schließt · nur für deinen eigenen Spielstand</div>`;
     if (this.tab === 'teleport') {
       const inp = this.root.querySelector<HTMLInputElement>('#a-search');
       if (inp) {

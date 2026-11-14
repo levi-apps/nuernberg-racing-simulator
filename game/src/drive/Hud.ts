@@ -37,7 +37,6 @@ export class Hud {
       'Jobs: zu farbigen Markern fahren und anhalten',
       '<b>X</b> Job abbrechen · <b>G</b> Garage/Autohaus',
       'Symbole: 🚗 Autohaus · 🔧 Tuning · 🏁 Rennen',
-      '<b>^</b> oder <b>F2</b> Admin-Panel',
       '<b>O</b> Startgebiet wählen',
       '<b>K</b> Karte / Debug',
       '<b>H</b> Hilfe aus',

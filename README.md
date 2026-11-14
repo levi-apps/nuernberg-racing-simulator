@@ -31,7 +31,6 @@ npm run dev             # Spiel unter http://localhost:5173
 | G | Garage / Autohaus (Autos wechseln, lackieren, kaufen) |
 | X | Job abbrechen bzw. Navigation beenden |
 | Shift (Gamepad RB) | Nitro, wenn eingebaut |
-| ^ oder F2 | Admin-Panel |
 | O | Startgebiet (Stadtteil) wählen |
 | T | KI-Verkehr an/aus |
 | + / − | Verkehrsdichte (25–250 %) |
@@ -121,9 +120,9 @@ Spielstand (Geld, Autos, Farben, Tuning) liegt im Browser (`localStorage`, Schl�
 
 Wie in GTA zeigen Symbole auf der Minikarte und in der großen Karte (K), wo etwas los ist: 🚗 Autohäuser, 🔧 Tuning-Werkstätten, 🏁 illegale Rennen, Job-Angebote (mit eigenem Symbol je Job), ⛽ Tankstellen, 🫧 Waschanlagen, 🚓 Polizei, 🚒 Feuerwehr und 🏥 Krankenhäuser. In der großen Karte blendet eine Legende unten rechts einzelne Arten ein und aus. Ein Klick auf ein Symbol setzt einen Wegpunkt mit Navigation. Job-Marker außerhalb des Bildes erscheinen am Bildrand mit Entfernung.
 
-## Admin-Panel (Taste ^ oder F2)
+## Admin-Panel (geheim)
 
-Zum Ausprobieren und Testen. Es verändert nur den eigenen Spielstand im Browser.
+Zum Ausprobieren und Testen. Es ist im Spiel nirgends sichtbar: **dreimal schnell (innerhalb von 2 s) in die obere rechte Ecke klicken oder tippen** öffnet es, ✕ oder Esc schließt es. Es verändert nur den eigenen Spielstand im Browser.
 
 - **Geld:** Beträge geben oder abziehen, Betrag setzen, Spielstand zurücksetzen (mit Rückfrage).
 - **Autos:** alle Autos freischalten, jedes Auto sofort fahren, Tuning auf Maximum oder entfernen.
