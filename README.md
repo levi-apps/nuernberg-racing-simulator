@@ -30,6 +30,8 @@ npm run dev             # Spiel unter http://localhost:5173
 | C | Kamera: Norden oben ↔ dreht mit dem Auto (Draufsicht) |
 | G | Garage / Autohaus (Autos wechseln, lackieren, kaufen) |
 | X | Job abbrechen bzw. Navigation beenden |
+| Shift (Gamepad RB) | Nitro, wenn eingebaut |
+| ^ oder F2 | Admin-Panel |
 | O | Startgebiet (Stadtteil) wählen |
 | T | KI-Verkehr an/aus |
 | + / − | Verkehrsdichte (25–250 %) |
@@ -85,7 +87,7 @@ Straßen, Markierungen und Schatten bleiben flach auf dem Boden. Straßennamen e
 | 🛋️ Umzug | Transporter/Abschlepper | 13 | lange Fahrt, Ladezeit, Schäden an den Möbeln kosten |
 | 🪝 Abschleppen | Abschleppwagen | 14 | Pannenauto hängt hinten dran, zur Werkstatt |
 | 🎩 VIP-Fahrt | Oberklasse | 18 | vom Hotel zu Oper, Bahnhof, Restaurant …; ohne Unfall/Rot gibt es 40 % Trinkgeld |
-| 🏁 Straßenrennen | jedes | Einsatz | gegen 3 Gegner über 2–4 km mit Kontrollpunkten; Sieg 2,2× Einsatz, Platz 2 1,2× |
+| 🏁 Illegales Rennen | siehe unten | Einsatz | an festen Treffpunkten, gegen 3 Gegner über 2–5 km mit Kontrollpunkten; Sieg 2,2× Einsatz, Platz 2 1,2× |
 
 Grau mit Schloss bedeutet: Dafür fehlt das passende Fahrzeug. Unfälle und rote Ampeln mindern bei den meisten Jobs den Lohn. X bricht einen Job ab.
 
@@ -103,7 +105,32 @@ Grau mit Schloss bedeutet: Dafür fehlt das passende Fahrzeug. Unfälle und rote
 | Blitz GT | 2.200 € | 290 km/h, Express +50 % | 1,5–3 h |
 | Aurum Hyper | 8.000 € | 345 km/h, das teuerste | ~7 h |
 
-Spielstand (Geld, Autos, Farben) liegt im Browser (`localStorage`, Schlüssel `nrs.save`).
+**Illegale Rennen** finden an 23 festen Treffpunkten statt, verteilt über die ganze Stadt. Es gibt drei Klassen:
+
+| Klasse | Einsatz | Gegner (Höchsttempo) | Voraussetzung |
+|---|---|---|---|
+| Straßenrennen (rot) | 25 € | ~150 km/h | – |
+| Tuner-Treffen (lila) | 120 € | ~205 km/h | – (ohne Tuning kaum zu gewinnen) |
+| Supersport-Rennen (schwarz) | 500 € | ~285 km/h | Sportwagen (Blitz GT, Aurum Hyper) |
+
+**Tuning** gibt es in den Kfz-Werkstätten und Reifenhändlern aus OSM (orange 🔧-Marker). Halte dort an, dann öffnet sich die Werkstatt. Jedes eigene Auto hat drei Stufen für Motor (Tempo und Beschleunigung), Bremsen, Reifen & Fahrwerk (Grip und Lenkung) und Nitro (3, 5 oder 8 Sekunden Schub mit Shift, lädt sich in etwa 25 s wieder auf). Die Preise richten sich nach dem Wert des Autos. Lackieren geht dort ebenfalls.
+
+Spielstand (Geld, Autos, Farben, Tuning) liegt im Browser (`localStorage`, Schlüssel `nrs.save`).
+
+## Kartensymbole
+
+Wie in GTA zeigen Symbole auf der Minikarte und in der großen Karte (K), wo etwas los ist: 🚗 Autohäuser, 🔧 Tuning-Werkstätten, 🏁 illegale Rennen, Job-Angebote (mit eigenem Symbol je Job), ⛽ Tankstellen, 🫧 Waschanlagen, 🚓 Polizei, 🚒 Feuerwehr und 🏥 Krankenhäuser. In der großen Karte blendet eine Legende unten rechts einzelne Arten ein und aus. Ein Klick auf ein Symbol setzt einen Wegpunkt mit Navigation. Job-Marker außerhalb des Bildes erscheinen am Bildrand mit Entfernung.
+
+## Admin-Panel (Taste ^ oder F2)
+
+Zum Ausprobieren und Testen. Es verändert nur den eigenen Spielstand im Browser.
+
+- **Geld:** Beträge geben oder abziehen, Betrag setzen, Spielstand zurücksetzen (mit Rückfrage).
+- **Autos:** alle Autos freischalten, jedes Auto sofort fahren, Tuning auf Maximum oder entfernen.
+- **Teleport:** Suche über alle Straßen, Adressen („Fürther Str 100“), Stadtteile und benannte Orte. Dazu Schnellziele (nächstes Autohaus, Werkstatt, Rennen, Tankstelle, Polizei, Krankenhaus, Navigationsziel, Job-Ziel, Zufall), Koordinaten und „Klick in der Karte teleportiert“.
+- **Fahren:** Leistungsfaktor ×0,5 bis ×4, Geistermodus (durch Häuser und Autos), unendlich Nitro, anhalten, umdrehen, Kamera.
+- **Welt:** Verkehr an/aus, Dichte, Verkehr neu verteilen, Spieltempo (Zeitlupe bis Zeitraffer), FPS-/Positionsanzeige, Kartensymbole.
+- **Jobs:** Job sofort erledigen oder abbrechen, neue Angebote, jeden Job sofort starten, zum nächsten Rennen, Rennen gewinnen.
 
 ## Navigation
 
@@ -174,7 +201,7 @@ Meter in ETRS89 / UTM 32N (EPSG:25832), verschoben auf den Hauptmarkt als Urspru
 | `routing.bin` | Routinggraph über alle Spuren (binär, siehe `parseRouting` in `shared/`) |
 | `names.json` | Straßennamen für Abbiegehinweise |
 | `addresses.json` | ~74.000 Adressen, eingerastet auf die nächste öffentliche Spur |
-| `pois.json` | ~5.700 benannte Orte (Gastronomie, Läden, Hotels, Kliniken, Autohäuser, Werkstätten …) |
+| `pois.json` | ~6.400 benannte Orte (Gastronomie, Läden, Hotels, Kliniken, Autohäuser, Werkstätten, Tankstellen …) |
 | `bus.json` | 164 Buslinien (je Richtung) mit eingerasteten Haltestellen |
 
 Objekte, die über Kachelgrenzen reichen, stehen in mehreren Kacheln mit derselben `id`.

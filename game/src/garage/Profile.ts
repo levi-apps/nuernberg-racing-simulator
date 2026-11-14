@@ -2,6 +2,7 @@
  * Spielstand im Browser: Geld, erledigte Aufträge, eigene Autos, aktuelles Auto, Lackfarben.
  */
 import { carById, CARS } from './Cars.ts';
+import { MAX_LEVEL, NO_TUNING, tuningPrice, type Part, type Tuning } from './Tuning.ts';
 
 const KEY = 'nrs.save';
 
@@ -12,6 +13,7 @@ interface Saved {
   current?: string;
   paint?: Record<string, number>;
   earned?: number;
+  tuning?: Record<string, Tuning>;
 }
 
 export class Profile {
@@ -22,6 +24,7 @@ export class Profile {
   owned: string[] = [CARS[0].id];
   current = CARS[0].id;
   paint: Record<string, number> = {};
+  tuning: Record<string, Tuning> = {};
   onChange?: () => void;
 
   constructor() {
@@ -34,6 +37,7 @@ export class Profile {
       if (!this.owned.includes(CARS[0].id)) this.owned.unshift(CARS[0].id);
       this.current = s.current && this.owned.includes(s.current) ? s.current : CARS[0].id;
       this.paint = s.paint ?? {};
+      this.tuning = s.tuning ?? {};
     } catch {
       /* Speicher nicht verfügbar */
     }
@@ -41,7 +45,7 @@ export class Profile {
 
   save(): void {
     try {
-      const s: Saved = { money: this.money, completed: this.completed, owned: this.owned, current: this.current, paint: this.paint, earned: this.earned };
+      const s: Saved = { money: this.money, completed: this.completed, owned: this.owned, current: this.current, paint: this.paint, earned: this.earned, tuning: this.tuning };
       localStorage.setItem(KEY, JSON.stringify(s));
     } catch {
       /* egal */
@@ -82,6 +86,28 @@ export class Profile {
 
   setPaint(id: string, color: number): void {
     this.paint[id] = color;
+    this.save();
+  }
+
+  tuneOf(id: string): Tuning {
+    return { ...NO_TUNING, ...this.tuning[id] };
+  }
+
+  /** nächste Tuningstufe kaufen (nur eigenes Auto) */
+  buyTuning(id: string, part: Part): boolean {
+    const t = this.tuneOf(id);
+    if (!this.owns(id) || t[part] >= MAX_LEVEL) return false;
+    const price = tuningPrice(carById(id), part, t[part] + 1);
+    if (this.money < price) return false;
+    this.money -= price;
+    t[part]++;
+    this.tuning[id] = t;
+    this.save();
+    return true;
+  }
+
+  setTuning(id: string, t: Tuning): void {
+    this.tuning[id] = { ...t };
     this.save();
   }
 

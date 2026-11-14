@@ -60,6 +60,10 @@ export class Car {
   ground: Ground = 'road';
   braking = false;
   reversing = false;
+  /** Nitro aktiv (0/1) */
+  boost = 0;
+  /** Tempo-Faktor aus dem Admin-Panel */
+  power = 1;
 
   constructor(public spec: CarSpec = DEFAULT_CAR) {}
 
@@ -96,7 +100,8 @@ export class Car {
     this.steer += Math.max(-steerSpeed * dt, Math.min(steerSpeed * dt, inp.steer - this.steer));
 
     // Längsdynamik
-    const top = s.maxSpeed * g.topFactor;
+    const top = s.maxSpeed * g.topFactor * this.power * (1 + 0.28 * this.boost);
+    const acc = s.accel * this.power * (1 + 1.1 * this.boost);
     let a = 0;
     this.braking = false;
     this.reversing = false;
@@ -104,7 +109,7 @@ export class Car {
       if (vF < -0.5) {
         a += s.brake * inp.throttle;
         this.braking = true;
-      } else a += s.accel * inp.throttle * Math.max(0, 1 - (vF / top) ** 2);
+      } else a += acc * inp.throttle * Math.max(0, 1 - (vF / top) ** 2);
     }
     if (inp.brake > 0) {
       if (vF > 0.5) {

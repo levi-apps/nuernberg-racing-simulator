@@ -21,6 +21,7 @@ export class GarageUi {
 
   constructor(private profile: Profile) {
     this.root.id = 'garage';
+    this.root.className = 'g-modal';
     this.root.style.display = 'none';
     document.body.append(this.root);
     this.root.addEventListener('click', (e) => {

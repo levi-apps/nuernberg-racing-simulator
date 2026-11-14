@@ -367,7 +367,7 @@ export interface AddressFile {
 
 export interface Poi {
   n: string; // Name
-  c: string; // Kategorie (food, shop, hotel, health, station, culture, school, emergency, office)
+  c: string; // Kategorie (food, shop, hotel, health, station, culture, school, emergency, office, car)
   t: string; // OSM-Unterart
   x: number; // dm
   y: number;

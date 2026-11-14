@@ -78,7 +78,7 @@ export interface RawAddress {
   p: Pt;
 }
 
-export type PoiCat = 'food' | 'shop' | 'hotel' | 'health' | 'station' | 'culture' | 'school' | 'emergency' | 'office';
+export type PoiCat = 'food' | 'shop' | 'hotel' | 'health' | 'station' | 'culture' | 'school' | 'emergency' | 'office' | 'car';
 
 export interface RawPoi {
   name: string;
@@ -88,8 +88,18 @@ export interface RawPoi {
 }
 
 /** Kategorie eines benannten Orts (für Aufträge) */
+/** Name eines Orts; Tankstellen und Waschanlagen haben oft nur eine Marke */
+export function poiName(t: Tags): string | undefined {
+  if (t.name) return t.name;
+  if (t.amenity === 'fuel') return t.brand ? `${t.brand} Tankstelle` : 'Tankstelle';
+  if (t.amenity === 'car_wash') return t.brand ? `${t.brand} Waschanlage` : 'Waschanlage';
+  return undefined;
+}
+
 export function poiCat(t: Tags): { cat: PoiCat; sub: string } | null {
   const a = t.amenity;
+  if (a === 'fuel' || a === 'car_wash') return { cat: 'car', sub: a };
+  if (t.shop === 'tyres' || t.shop === 'car_parts') return { cat: 'car', sub: t.shop };
   if (a === 'restaurant' || a === 'fast_food' || a === 'cafe' || a === 'ice_cream' || a === 'biergarten' || a === 'pub' || a === 'bar') return { cat: 'food', sub: a };
   if (a === 'hospital' || a === 'clinic' || a === 'doctors' || a === 'pharmacy') return { cat: 'health', sub: a };
   if (a === 'police' || a === 'fire_station') return { cat: 'emergency', sub: a };
@@ -196,16 +206,17 @@ export function extract(pbfPath: string, log: (s: string) => void): Extract {
           treePts.push([x, y, Number.isFinite(dc) && dc > 1 && dc < 30 ? dc / 2 : 0]);
         }
         if (tags['addr:housenumber'] && tags['addr:street']) addrPts.push({ street: tags['addr:street'], num: tags['addr:housenumber'], p: [x, y] });
-        if (tags.name) {
+        const pname = poiName(tags);
+        if (pname) {
           const pc = poiCat(tags);
-          if (pc) poiPts.push({ name: tags.name, ...pc, p: [x, y] });
+          if (pc) poiPts.push({ name: pname, ...pc, p: [x, y] });
         }
         if (tags.name && (tags.place === 'suburb' || tags.place === 'quarter' || tags.place === 'neighbourhood' || tags.place === 'village' || tags.place === 'hamlet' || tags.tourism === 'attraction' || tags.railway === 'station' || tags.amenity === 'townhall'))
           placeNodes.push({ name: tags.name, p: [x, y], kind: tags.place ?? tags.tourism ?? tags.railway ?? tags.amenity ?? '' });
       }
     },
     way(id, refs, tags) {
-      if ((tags['addr:housenumber'] && tags['addr:street']) || (tags.name && poiCat(tags))) tagWays.push({ refs, tags });
+      if ((tags['addr:housenumber'] && tags['addr:street']) || (poiName(tags) && poiCat(tags))) tagWays.push({ refs, tags });
       if (tags.natural === 'tree_row') treeRows.push(refs);
       if (roadClass(tags)) roadWays.push({ id, refs, tags });
       else if (tags.building && tags.building !== 'no') buildingWays.push({ id, refs, tags });
@@ -338,9 +349,10 @@ export function extract(pbfPath: string, log: (s: string) => void): Extract {
     if (!r || r.pts.length < 3) continue;
     const c = ringCentroid(r.pts.slice(0, -1));
     if (w.tags['addr:housenumber'] && w.tags['addr:street']) addrPts.push({ street: w.tags['addr:street'], num: w.tags['addr:housenumber'], p: c });
-    if (w.tags.name) {
+    const pname = poiName(w.tags);
+    if (pname) {
       const pc = poiCat(w.tags);
-      if (pc) poiPts.push({ name: w.tags.name, ...pc, p: c });
+      if (pc) poiPts.push({ name: pname, ...pc, p: c });
     }
   }
   // doppelte Adressen (Knoten + Gebäude) zusammenfassen

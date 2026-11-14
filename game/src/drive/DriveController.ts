@@ -37,6 +37,12 @@ export class DriveController {
   private outsideWarned = false;
   private lastImpact = 0;
   currentLane: Lane | null = null;
+  /** Nitro: Vorrat und aktueller Stand in Sekunden */
+  nitroCap = 0;
+  nitro = 0;
+  infiniteNitro = false;
+  /** Admin: keine Kollisionen mit Gebäuden und Verkehr */
+  ghost = false;
   traffic?: TrafficSim;
   /** wird aufgerufen, wenn das Auto weit versetzt wird */
   onTeleport?: () => void;
@@ -147,9 +153,14 @@ export class DriveController {
         car.ground = surf.ground;
         if (surf.ground === 'road') car.layer = surf.layer;
         else car.layer = 0;
+        const boosting = this.nitroCap > 0 && this.nitro > 0 && this.input.nitro && inp.throttle > 0;
+        car.boost = boosting ? 1 : 0;
+        if (boosting) {
+          if (!this.infiniteNitro) this.nitro = Math.max(0, this.nitro - PHYS_DT);
+        } else this.nitro = Math.min(this.nitroCap, this.nitro + (PHYS_DT * this.nitroCap) / 25);
         car.step(PHYS_DT, inp);
         // Auf Brücken und in Tunneln keine Gebäudekollision
-        if (car.layer === 0) {
+        if (car.layer === 0 && !this.ghost) {
           const near = this.query.buildingsNear(car.x, car.y, car.spec.length);
           if (near.length) {
             const hit = car.collide(near, (x, y) => this.query.onAnyRoad(x, y));
@@ -161,7 +172,7 @@ export class DriveController {
           }
         }
         // andere Fahrzeuge
-        const imp = this.traffic?.collidePlayer() ?? 0;
+        const imp = this.ghost ? 0 : (this.traffic?.collidePlayer() ?? 0);
         if (imp > 3 && v.time - this.lastImpact > 0.6) {
           this.lastImpact = v.time;
           this.hud.message(imp > 10 ? 'Unfall!' : 'Blechschaden', 1.2);
@@ -181,6 +192,7 @@ export class DriveController {
     }
 
     this.mesh.update(car);
+    this.hud.setNitro(this.nitroCap > 0 ? this.nitro / this.nitroCap : null, car.boost > 0);
     this.updateInfo(dt);
     if (this.active) this.updateCamera(dt);
   }
@@ -194,6 +206,11 @@ export class DriveController {
     this.view.scene.add(this.mesh.group, this.mesh.group3d);
     this.mesh.set3D(this.active && this.view3D);
     this.mesh.update(this.car);
+  }
+
+  setNitro(seconds: number): void {
+    if (seconds !== this.nitroCap) this.nitro = seconds;
+    this.nitroCap = seconds;
   }
 
   setView3D(on: boolean): void {

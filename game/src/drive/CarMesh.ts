@@ -53,6 +53,7 @@ export class CarMesh {
   private frontWheels3d: THREE.Object3D[] = [];
   private brake3d!: THREE.MeshLambertMaterial;
   private tailMat = mat(0x8a0d16);
+  private flames: THREE.Mesh[] = [];
   private reverseMat = mat(0x666666);
 
   constructor(car: Car, color = 0xd7263d, body: Body = 'compact') {
@@ -169,6 +170,24 @@ export class CarMesh {
         this.group3d.add(wheel);
         if (sx === 1) this.frontWheels3d.push(wheel);
       }
+    // Nitro-Flamme hinter dem Auto
+    const flameMat = new THREE.MeshBasicMaterial({ color: 0x4fc3ff, transparent: true, opacity: 0.85, depthWrite: false, blending: THREE.AdditiveBlending });
+    const flameGeo = new THREE.ConeGeometry(0.28, 1.6, 10);
+    flameGeo.rotateZ(Math.PI / 2);
+    for (const sy of [0.35, -0.35]) {
+      const f2 = new THREE.Mesh(flameGeo, flameMat);
+      f2.position.set(-L / 2 - 0.75, sy * W * 0.6, 0);
+      f2.renderOrder = 27;
+      f2.layers.set(1);
+      f2.frustumCulled = false;
+      f2.visible = false;
+      this.group.add(f2);
+      this.flames.push(f2);
+      const f3 = f2.clone();
+      f3.position.z = 0.45;
+      this.group3d.add(f3);
+      this.flames.push(f3);
+    }
     this.group3d.visible = false;
   }
 
@@ -187,6 +206,11 @@ export class CarMesh {
     this.tailMat.color.setHex(car.braking ? 0xff2a2a : 0x8a0d16);
     this.reverseMat.color.setHex(car.reversing ? 0xffffff : 0x666666);
     this.brake3d.color.setHex(car.braking ? 0xff2a2a : 0x8a0d16);
+    const on = car.boost > 0;
+    for (const f of this.flames) {
+      f.visible = on;
+      if (on) f.scale.set(0.8 + Math.random() * 0.5, 1, 1);
+    }
   }
 
   dispose(): void {

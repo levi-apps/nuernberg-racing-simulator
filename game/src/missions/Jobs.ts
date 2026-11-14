@@ -17,6 +17,7 @@ import type { Navigator } from '../nav/Navigator.ts';
 import type { MarkerLayer, MarkerSpec } from './Markers.ts';
 import { formatDist, formatEuro, formatTime, type MissionUi } from './MissionUi.ts';
 import { RacePath, RaceRivals } from './Race.ts';
+import type { Blip } from '../world/Blips.ts';
 
 export type JobKind = 'taxi' | 'food' | 'express' | 'moving' | 'vip' | 'race' | 'bus' | 'tow' | 'transfer';
 
@@ -79,7 +80,17 @@ interface Offer {
   /** Buslinie: Haltestellen ab Start */
   stops?: Target[];
   line?: string;
+  /** Rennen: Klasse (RACE_TIERS) und Einsatz */
+  tier?: number;
+  stake?: number;
 }
+
+/** Klassen der illegalen Rennen: Einsatz, Gegnerstärke, nötiges Fahrzeug */
+export const RACE_TIERS: Array<{ name: string; stake: number; top: number; acc: number; needs?: Cap }> = [
+  { name: 'Straßenrennen', stake: 25, top: 150, acc: 7.5 },
+  { name: 'Tuner-Treffen', stake: 120, top: 205, acc: 10.5 },
+  { name: 'Supersport-Rennen', stake: 500, top: 285, acc: 14, needs: 'fast' },
+];
 
 interface Active {
   offer: Offer;
@@ -100,6 +111,8 @@ interface Active {
     next: number;
     startAt: number;
     stake: number;
+    /** Fortschritt des Spielers auf der Strecke (m) */
+    prog: number;
   };
   /** Abschleppen: angehängtes Auto */
   towed?: CarMesh;
@@ -134,6 +147,7 @@ export interface JobHooks {
   /** eigenes Auto wieder nehmen */
   restoreCar(): void;
   openGarage(dealer: string | null): void;
+  openTuning(shop: string): void;
   money(): void;
 }
 
@@ -141,6 +155,8 @@ export class JobSystem {
   offers: Offer[] = [];
   job: Active | null = null;
   dealers: Poi[];
+  tuners: Poi[];
+  raceSpots: Offer[] = [];
   private nextId = 1;
   private genTimer = 0;
   private stopTimer = 0;
@@ -164,6 +180,8 @@ export class JobSystem {
     private use3d: () => boolean,
   ) {
     this.dealers = data.pois.filter((p) => p.c === 'shop' && p.t === 'car');
+    this.tuners = data.pois.filter((p) => p.t === 'car_repair' || p.t === 'tyres');
+    this.raceSpots = this.makeRaceSpots();
   }
 
   // ------------------------------------------------------------- Angebote erzeugen
@@ -290,7 +308,7 @@ export class JobSystem {
     }
     if (len < 500 || len > 9000) return null;
     const minutes = time / 60 + (kind === 'bus' ? legs.length * 0.33 : 0.6);
-    const pay = kind === 'race' ? this.raceStake() * 2.2 : KINDS[kind].rate * minutes;
+    const pay = kind === 'race' ? 0 : KINDS[kind].rate * minutes;
     return {
       id: `j${this.nextId++}`,
       kind,
@@ -306,14 +324,107 @@ export class JobSystem {
     };
   }
 
-  raceStake(): number {
-    return Math.round(10 + this.profile.car.price * 0.02);
+  /**
+   * Feste Treffpunkte für illegale Rennen, gleichmäßig über die Stadt verteilt (Raster 2,4 km),
+   * jeweils auf einer schnellen Straße; Strecke 2–5 km. Immer gleich (fester Zufallsgenerator).
+   */
+  private makeRaceSpots(): Offer[] {
+    const G = this.data.graph;
+    const rnd = mulberry32(4711);
+    const CELL = 2400;
+    const cells = new Map<string, number[]>();
+    for (let l = 0; l < G.n; l++) {
+      if (G.flags[l] & 9 || G.layer[l] !== 0 || G.vmax[l] < 50 || G.len[l] < 80) continue;
+      const x = (G.x0[l] + G.x1[l]) / 20;
+      const y = (G.y0[l] + G.y1[l]) / 20;
+      const k = `${Math.floor(x / CELL)},${Math.floor(y / CELL)}`;
+      let a = cells.get(k);
+      if (!a) cells.set(k, (a = []));
+      a.push(l);
+    }
+    const fast: number[] = [];
+    for (const a of cells.values()) fast.push(...a);
+    const spots: Offer[] = [];
+    for (const key of [...cells.keys()].sort()) {
+      const cand = cells.get(key)!;
+      if (cand.length < 6) continue;
+      const lane = cand[(rnd() * cand.length) | 0];
+      const at = this.laneTarget(lane, G.len[lane] / 2);
+      for (let tries = 0; tries < 12; tries++) {
+        const dl = fast[(rnd() * fast.length) | 0];
+        const dest = this.laneTarget(dl, G.len[dl] / 2);
+        const dd = Math.hypot(dest.x - at.x, dest.y - at.y);
+        if (dd < 1600 || dd > 3600) continue;
+        const r = this.nav.router.route(at.lane, at.s, dest.lane, dest.s);
+        if (!r || r.length < 2000 || r.length > 5200) continue;
+        const roll = rnd();
+        const tier = roll < 0.5 ? 0 : roll < 0.85 ? 1 : 2;
+        const T = RACE_TIERS[tier];
+        spots.push({
+          id: `r${spots.length}`,
+          kind: 'race',
+          at: { ...at, label: `Treffpunkt ${at.label}` },
+          dest,
+          time: r.time,
+          len: r.length,
+          pay: T.stake * 2.2,
+          who: T.name,
+          expires: Infinity,
+          tier,
+          stake: T.stake,
+        });
+        break;
+      }
+    }
+    return spots;
+  }
+
+  private laneTarget(lane: number, s: number): Target {
+    const G = this.data.graph;
+    const f = G.len[lane] > 0 ? s / G.len[lane] : 0;
+    const ni = G.name[lane];
+    return {
+      lane,
+      s,
+      x: (G.x0[lane] + (G.x1[lane] - G.x0[lane]) * f) / 10,
+      y: (G.y0[lane] + (G.y1[lane] - G.y0[lane]) * f) / 10,
+      label: ni >= 0 ? this.data.names[ni] : 'Straße ohne Namen',
+    };
+  }
+
+  /** benötigte Fahrzeug-Fähigkeit für ein Angebot */
+  private needsOf(o: Offer): Cap | undefined {
+    return o.kind === 'race' ? RACE_TIERS[o.tier ?? 0].needs : KINDS[o.kind].needs;
+  }
+
+  private nearRaceSpots(r: number): Offer[] {
+    return this.raceSpots.filter((o) => Math.hypot(o.at.x - this.car.x, o.at.y - this.car.y) < r);
+  }
+
+  /** Job-Angebote als Kartensymbole */
+  jobBlips(): Blip[] {
+    if (this.job) return [];
+    return this.offers.map((o) => {
+      const k = KINDS[o.kind];
+      const needs = this.needsOf(o);
+      return {
+        id: o.id,
+        kind: 'job' as const,
+        x: o.at.x,
+        y: o.at.y,
+        name: `${k.title} · ~${formatEuro(o.pay)}`,
+        target: o.at,
+        icon: k.icon,
+        color: '#' + k.color.toString(16).padStart(6, '0'),
+        locked: !!needs && !this.profile.has(needs),
+      };
+    });
   }
 
   private refreshOffers(): void {
     const t = this.now();
     this.offers = this.offers.filter((o) => o.expires > t && Math.hypot(o.at.x - this.car.x, o.at.y - this.car.y) < OFFER_RANGE * 1.5);
-    const kinds: JobKind[] = ['taxi', 'taxi', 'food', 'express', 'transfer', 'moving', 'vip', 'tow', 'bus', 'race', 'food', 'taxi'];
+    const kinds: JobKind[] = ['taxi', 'taxi', 'food', 'express', 'transfer', 'moving', 'vip', 'tow', 'bus', 'food', 'taxi'];
     let tries = 0;
     while (this.offers.length < MAX_OFFERS && tries++ < 8) {
       // jede Art möglichst einmal vertreten
@@ -327,41 +438,39 @@ export class JobSystem {
   private markerSpecs(): MarkerSpec[] {
     const specs: MarkerSpec[] = [];
     if (!this.job) {
-      for (const o of this.offers) {
+      for (const o of [...this.offers, ...this.nearRaceSpots(1300)]) {
         const k = KINDS[o.kind];
-        const locked = !!k.needs && !this.profile.has(k.needs);
+        const needs = this.needsOf(o);
+        const locked = !!needs && !this.profile.has(needs);
         const p = this.nav.targetPoint(o.at);
-        const payTxt = o.kind === 'race' ? `Einsatz ${formatEuro(this.raceStake())}` : `~${formatEuro(o.pay)}`;
+        const payTxt = o.kind === 'race' ? `${o.who} · Einsatz ${formatEuro(o.stake ?? 0)}` : `~${formatEuro(o.pay)}`;
         specs.push({
           id: o.id,
           x: p[0],
           y: p[1],
           color: k.color,
           icon: k.icon,
-          text: `${k.title} · ${payTxt}`,
+          text: o.kind === 'race' ? payTxt : `${k.title} · ${payTxt}`,
           locked,
         });
       }
     }
-    // Autohäuser in der Nähe
-    const near = this.dealers
-      .map((d) => ({
-        d,
-        dist: Math.hypot(d.x / 10 - this.car.x, d.y / 10 - this.car.y),
-      }))
+    // Autohäuser und Tuning-Werkstätten in der Nähe
+    const near = this.shops()
+      .map((e) => ({ ...e, dist: Math.hypot(e.poi.x / 10 - this.car.x, e.poi.y / 10 - this.car.y) }))
       .filter((e) => e.dist < 1600)
       .sort((a, b) => a.dist - b.dist)
-      .slice(0, 6);
-    for (const { d } of near) {
+      .slice(0, 10);
+    for (const { poi: d, kind } of near) {
       const p = this.nav.targetPoint(poiTarget(d));
       if (specs.some((m) => Math.hypot(m.x - p[0], m.y - p[1]) < 25)) continue;
       specs.push({
-        id: `d${d.l}_${d.s}`,
+        id: `${kind === 'dealer' ? 'd' : 't'}${d.l}_${d.s}`,
         x: p[0],
         y: p[1],
-        color: 0x1d6fe0,
-        icon: '🚗',
-        text: `Autohaus ${d.n}`,
+        color: kind === 'dealer' ? 0x1d6fe0 : 0xff8a00,
+        icon: kind === 'dealer' ? '🚗' : '🔧',
+        text: kind === 'dealer' ? `Autohaus ${d.n}` : `Tuning ${d.n}`,
         locked: false,
       });
     }
@@ -394,41 +503,50 @@ export class JobSystem {
     this.hud.message(msg, sec);
   }
 
+  private shops(): Array<{ poi: Poi; kind: 'dealer' | 'tuning' }> {
+    return [...this.dealers.map((poi) => ({ poi, kind: 'dealer' as const })), ...this.tuners.map((poi) => ({ poi, kind: 'tuning' as const }))];
+  }
+
   /** Anhalten an einem Marker startet den Job bzw. öffnet das Autohaus */
   private checkMarkers(dt: number): void {
     const slow = Math.abs(this.car.speed) * 3.6 < 8;
     let near: Offer | null = null;
-    for (const o of this.offers) {
+    for (const o of [...this.offers, ...this.nearRaceSpots(60)]) {
       const p = this.nav.targetPoint(o.at);
       if (Math.hypot(p[0] - this.car.x, p[1] - this.car.y) < 10) near = o;
     }
-    // Autohaus
-    let dealer: Poi | null = null;
-    for (const d of this.dealers) {
-      const p = this.nav.targetPoint(poiTarget(d));
-      if (Math.hypot(p[0] - this.car.x, p[1] - this.car.y) < 14) dealer = d;
+    // Autohaus oder Werkstatt
+    let shop: { poi: Poi; kind: 'dealer' | 'tuning' } | null = null;
+    for (const e of this.shops()) {
+      if (Math.abs(e.poi.x / 10 - this.car.x) > 80 || Math.abs(e.poi.y / 10 - this.car.y) > 80) continue;
+      const p = this.nav.targetPoint(poiTarget(e.poi));
+      if (Math.hypot(p[0] - this.car.x, p[1] - this.car.y) < 14) shop = e;
     }
-    if (dealer && near) dealer = null; // Job-Marker hat Vorrang (Überführung startet am Autohaus)
-    if (dealer && slow) {
-      if (this.dealerCooldown <= 0 && this.lastNear !== dealer.n) {
-        this.lastNear = dealer.n;
-        this.hooks.openGarage(dealer.n);
+    if (shop && near) shop = null; // Job-Marker hat Vorrang (Überführung startet am Autohaus)
+    if (shop && slow) {
+      const key = shop.kind + shop.poi.n;
+      if (this.dealerCooldown <= 0 && this.lastNear !== key) {
+        this.lastNear = key;
+        if (shop.kind === 'dealer') this.hooks.openGarage(shop.poi.n);
+        else this.hooks.openTuning(shop.poi.n);
       }
-    } else if (!dealer) this.lastNear = '';
+    } else if (!shop) this.lastNear = '';
     if (!near) {
       this.stopTimer = 0;
       this.ui.setJob(null);
       return;
     }
     const k = KINDS[near.kind];
-    if (k.needs && !this.profile.has(k.needs)) {
-      const car = CARS.find((c) => c.caps.includes(k.needs!));
+    const needs = this.needsOf(near);
+    const title = near.kind === 'race' ? near.who : k.title;
+    if (needs && !this.profile.has(needs)) {
+      const car = CARS.find((c) => c.caps.includes(needs));
       this.ui.setJob(
-        `<div class="job-title">${k.icon} ${k.title}</div>🔒 Braucht ein Fahrzeug für <b>${CAP_TEXT[k.needs]}</b>${car ? `<br>z. B. ${car.name} (${formatEuro(car.price)}) im Autohaus` : ''}`,
+        `<div class="job-title">${k.icon} ${title}</div>🔒 Braucht ein Fahrzeug mit <b>${CAP_TEXT[needs]}</b>${car ? `<br>z. B. ${car.name} (${formatEuro(car.price)}) im Autohaus` : ''}`,
       );
       return;
     }
-    this.ui.setJob(`<div class="job-title">${k.icon} ${k.title}</div>${this.describe(near)}<br><span class="muted">Anhalten zum Starten</span>`);
+    this.ui.setJob(`<div class="job-title">${k.icon} ${title}</div>${this.describe(near)}<br><span class="muted">Anhalten zum Starten</span>`);
     if (!slow) {
       this.stopTimer = 0;
       return;
@@ -457,7 +575,7 @@ export class JobSystem {
       case 'bus':
         return `<b>Linie ${esc(o.line ?? '')}</b>: ${o.stops?.length} Haltestellen bis ${esc(o.dest.label)} (${km}) · ~${formatEuro(o.pay)}`;
       case 'race':
-        return `Gegen 3 Gegner nach <b>${esc(o.dest.label)}</b> (${km}) · Einsatz ${formatEuro(this.raceStake())}, Sieg ${formatEuro(this.raceStake() * 2.2)}`;
+        return `Gegen 3 Gegner nach <b>${esc(o.dest.label)}</b> (${km}) · Einsatz ${formatEuro(o.stake ?? 0)}, Sieg ${formatEuro((o.stake ?? 0) * 2.2)}`;
     }
   }
 
@@ -511,7 +629,7 @@ export class JobSystem {
         break;
       }
       case 'race': {
-        const stake = this.raceStake();
+        const stake = o.stake ?? 0;
         if (this.profile.money < stake) {
           this.say(`Für den Einsatz fehlen dir ${formatEuro(stake - this.profile.money)}`, 2.5);
           return;
@@ -529,7 +647,8 @@ export class JobSystem {
       // Rennstrecke = berechnete Route
       const path = new RacePath(this.nav.path.map((p) => [p[0], p[1]] as [number, number]));
       const rivals = new RaceRivals(this.scene, path);
-      rivals.spawn(3, this.profile.car.spec.maxSpeed, this.profile.car.spec.accel, this.use3d());
+      const T = RACE_TIERS[o.tier ?? 0];
+      rivals.spawn(3, T.top / 3.6, T.acc, this.use3d());
       const checkpoints: number[] = [];
       for (let s = 350; s < path.length - 100; s += 350) checkpoints.push(s);
       checkpoints.push(path.length);
@@ -539,7 +658,8 @@ export class JobSystem {
         checkpoints,
         next: 0,
         startAt: t + 3.5,
-        stake: this.raceStake(),
+        stake: o.stake ?? 0,
+        prog: 0,
       };
       this.say('3 … 2 … 1 …', 3);
       return;
@@ -763,7 +883,7 @@ export class JobSystem {
     const started = t >= r.startAt;
     r.rivals.update(dt, t, started);
     if (!started) {
-      this.ui.setJob(`<div class="job-title">🏁 Straßenrennen</div>Start in <b>${Math.ceil(r.startAt - t)}</b> …`);
+      this.ui.setJob(`<div class="job-title">🏁 ${esc(j.offer.who)}</div>Start in <b>${Math.ceil(r.startAt - t)}</b> …`);
       return;
     }
     // Fortschritt des Spielers: Projektion auf die Strecke, Kontrollpunkte der Reihe nach
@@ -783,12 +903,14 @@ export class JobSystem {
       }
       this.say(`Kontrollpunkt ${r.next}/${r.checkpoints.length - 1}`, 1);
     }
-    const playerS = r.next > 0 ? r.checkpoints[r.next - 1] : 0;
-    const sp = this.progressOnPath(r.path, playerS);
+    // Fortschritt stetig nachführen (kleines Suchfenster, sonst springt er bei Schleifen der Strecke)
+    const lastCp = r.next > 0 ? r.checkpoints[r.next - 1] : 0;
+    r.prog = this.progressOnPath(r.path, Math.max(r.prog, lastCp - 40));
+    const sp = r.prog;
     const ahead = r.rivals.rivals.filter((x) => x.finished >= 0 || x.s > sp).length;
     this.ui.setJob(
       [
-        `<div class="job-title">🏁 Straßenrennen</div>`,
+        `<div class="job-title">🏁 ${esc(j.offer.who)}</div>`,
         `Position <b>${ahead + 1}</b> von ${r.rivals.rivals.length + 1}`,
         `Kontrollpunkt ${r.next + 1}/${r.checkpoints.length} · ${formatDist(Math.max(0, r.path.length - sp))} bis Ziel`,
         `<span class="muted">Zeit ${formatTime(t - r.startAt)} · Regeln gelten hier nicht (noch)</span>`,
@@ -800,7 +922,7 @@ export class JobSystem {
   private progressOnPath(path: RacePath, from: number): number {
     let best = from;
     let bd = Infinity;
-    for (let s = Math.max(0, from - 50); s <= Math.min(path.length, from + 500); s += 5) {
+    for (let s = Math.max(0, from - 20); s <= Math.min(path.length, from + 80); s += 2) {
       const p = path.at(s);
       const d = Math.hypot(p.x - this.car.x, p.y - this.car.y);
       if (d < bd) {
@@ -851,6 +973,32 @@ export class JobSystem {
     this.ui.setJob(rows.join('<br>'));
   }
 
+  // ------------------------------------------------------------- Admin
+
+  /** aktuellen Job sofort erfolgreich beenden */
+  adminComplete(): void {
+    const j = this.job;
+    if (!j) return;
+    if (j.offer.kind === 'race') return this.finish((j.race?.stake ?? 0) * 2.2, ['Platz 1 (Admin)'], 'Sieg!');
+    if (j.offer.kind === 'bus') return this.finish(j.offer.pay * 1.25, [`Linie ${j.offer.line} (Admin)`], 'Endhaltestelle');
+    this.complete(this.now());
+  }
+
+  adminRefresh(): void {
+    this.offers = [];
+    this.genTimer = 0;
+  }
+
+  /** Job einer Art sofort starten (ohne Marker, ohne Fahrzeugprüfung) */
+  adminStart(kind: JobKind): boolean {
+    if (this.job) this.cancel();
+    let o: Offer | null = null;
+    for (let i = 0; i < 25 && !o; i++) o = this.makeOffer(kind);
+    if (!o) return false;
+    this.start(o);
+    return !!this.job;
+  }
+
   /** nächstes Autohaus (für die Navigation aus der Garage) */
   nearestDealer(): Poi | null {
     let best: Poi | null = null;
@@ -869,6 +1017,17 @@ export class JobSystem {
   garageClosed(): void {
     this.dealerCooldown = 6;
   }
+}
+
+function mulberry32(seed: number): () => number {
+  let a = seed >>> 0;
+  return () => {
+    a = (a + 0x6d2b79f5) >>> 0;
+    let t = a;
+    t = Math.imul(t ^ (t >>> 15), t | 1);
+    t ^= t + Math.imul(t ^ (t >>> 7), t | 61);
+    return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+  };
 }
 
 function pick<T>(a: T[]): T {

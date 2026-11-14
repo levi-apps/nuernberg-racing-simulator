@@ -32,6 +32,13 @@ export class Input {
     this.pressed.clear();
   }
 
+  /** Nitro: Shift oder Gamepad RB */
+  get nitro(): boolean {
+    if (!this.enabled) return false;
+    const pad = navigator.getGamepads?.().find((p) => p && p.connected);
+    return this.down('ShiftLeft', 'ShiftRight') || !!pad?.buttons[5]?.pressed;
+  }
+
   private down(...codes: string[]): boolean {
     return codes.some((c) => this.keys.has(c));
   }

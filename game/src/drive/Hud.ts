@@ -10,6 +10,8 @@ export class Hud {
   private helpEl = document.createElement('div');
   private loadingEl = document.createElement('div');
   private violEl = document.createElement('div');
+  private nitroEl = document.createElement('div');
+  private nitroBar = document.createElement('i');
   private msgTimer = 0;
 
   constructor() {
@@ -27,20 +29,29 @@ export class Hud {
       '<b>W / ↑</b> Gas',
       '<b>S / ↓</b> Bremse, rückwärts',
       '<b>A D / ← →</b> lenken',
-      '<b>Leertaste</b> Handbremse',
+      '<b>Leertaste</b> Handbremse · <b>Shift</b> Nitro',
       '<b>R</b> zurück auf die Straße',
       '<b>V</b> 3D-Ansicht / Draufsicht',
       '<b>C</b> Kamera drehen',
       '<b>T</b> Verkehr an/aus, <b>+ / −</b> Dichte',
       'Jobs: zu farbigen Markern fahren und anhalten',
       '<b>X</b> Job abbrechen · <b>G</b> Garage/Autohaus',
+      'Symbole: 🚗 Autohaus · 🔧 Tuning · 🏁 Rennen',
+      '<b>^</b> oder <b>F2</b> Admin-Panel',
       '<b>O</b> Startgebiet wählen',
       '<b>K</b> Karte / Debug',
       '<b>H</b> Hilfe aus',
     ].join('<br>');
     const dash = document.createElement('div');
     dash.className = 'dash';
-    dash.append(this.limitEl, this.speedEl);
+    this.nitroEl.className = 'nitro';
+    this.nitroEl.innerHTML = '<span>NOS</span>';
+    const track = document.createElement('b');
+    track.className = 'track';
+    track.append(this.nitroBar);
+    this.nitroEl.append(track);
+    this.nitroEl.style.display = 'none';
+    dash.append(this.limitEl, this.speedEl, this.nitroEl);
     this.root.append(this.streetEl, dash, this.msgEl, this.helpEl, this.loadingEl, this.violEl);
     document.body.append(this.root);
   }
@@ -70,6 +81,14 @@ export class Hud {
 
   toggleHelp(): void {
     this.helpEl.classList.toggle('hidden');
+  }
+
+  /** Nitro-Füllstand 0..1, null = kein Nitro verbaut */
+  setNitro(level: number | null, active: boolean): void {
+    this.nitroEl.style.display = level === null ? 'none' : '';
+    if (level === null) return;
+    this.nitroBar.style.width = `${Math.round(level * 100)}%`;
+    this.nitroEl.classList.toggle('on', active);
   }
 
   setViolations(n: number): void {

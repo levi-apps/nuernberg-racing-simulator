@@ -4,7 +4,7 @@
  */
 import * as THREE from 'three';
 import type { WorldView } from '../world/WorldView.ts';
-import { RL_MAIN, RL_MINI } from '../world/TileView.ts';
+import { RL_MAIN } from '../world/TileView.ts';
 
 export interface MarkerSpec {
   id: string;
@@ -25,7 +25,6 @@ interface Entry {
 
 const ringGeo = new THREE.RingGeometry(3.4, 4.4, 40);
 const discGeo = new THREE.CircleGeometry(2.2, 32);
-const miniGeo = new THREE.CircleGeometry(20, 20);
 const beamGeo = new THREE.CylinderGeometry(2.2, 2.2, 1, 24, 1, true);
 beamGeo.rotateX(Math.PI / 2);
 beamGeo.translate(0, 0, 0.5);
@@ -84,7 +83,6 @@ export class MarkerLayer {
     );
     beam.scale.set(1, 1, 30);
     beam.userData.beam = true;
-    m(miniGeo, new THREE.MeshBasicMaterial({ color, transparent: true, opacity: 0.95, depthTest: false }), 57, RL_MINI);
     this.view.scene.add(g);
     const label = document.createElement('div');
     label.className = s.locked ? 'job-label locked' : 'job-label';
@@ -113,7 +111,9 @@ export class MarkerLayer {
       const inside = sx > -80 && sy > -40 && sx < W + 80 && sy < H + 40;
       const onScreen = show && inside && d < far;
       // Hinweis am Bildschirmrand für Marker außerhalb der Ansicht (nur 2D, bis ~1,2 km)
-      const edge = show && !inside && !in3d && !e.spec.locked && d < (e.spec.id.startsWith('d') ? 600 : 1200);
+      // Autohäuser/Werkstätten nur in der Nähe, sonst würde der Rand zu voll
+    const shop = e.spec.id.startsWith('d') || e.spec.id.startsWith('t');
+    const edge = show && !inside && !in3d && !e.spec.locked && d < (shop ? 380 : 1200);
       e.label.style.display = onScreen || edge ? '' : 'none';
       e.label.classList.toggle('edge', edge);
       if (onScreen) {

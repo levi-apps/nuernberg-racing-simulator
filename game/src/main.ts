@@ -15,6 +15,12 @@ import { carById } from './garage/Cars.ts';
 import { GarageUi } from './garage/GarageUi.ts';
 import { formatDist, formatTime, MissionUi } from './missions/MissionUi.ts';
 import { StartMenu } from './ui/StartMenu.ts';
+import { AdminPanel } from './ui/AdminPanel.ts';
+import { BlipLayer, type Blip, type BlipKind } from './world/Blips.ts';
+import { TuningUi } from './garage/TuningUi.ts';
+import { NITRO_SECONDS, PARTS, tunedSpec } from './garage/Tuning.ts';
+import { poiTarget, type NavData } from './nav/NavData.ts';
+import { formatEuro } from './missions/MissionUi.ts';
 
 const canvas = document.getElementById('map') as HTMLCanvasElement;
 const view = new WorldView(canvas);
@@ -29,12 +35,20 @@ let jobs: JobSystem | null = null;
 const profile = new Profile();
 const garage = new GarageUi(profile);
 const markers = new MarkerLayer(view);
+const tuning = new TuningUi(profile);
+const blips = new BlipLayer(view);
+let navData: NavData | null = null;
+let places: Place[] = [];
 
+/** eigenes Auto mit Tuning und Lack übernehmen */
 function applyOwnCar() {
   const m = profile.car;
-  drive.setCar(m.spec, profile.colorOf(m.id), m.body);
+  const t = profile.tuneOf(m.id);
+  drive.setCar(tunedSpec(m.spec, t), profile.colorOf(m.id), m.body);
+  drive.setNitro(NITRO_SECONDS[t.nitro]);
   missionUi.setMoney(profile.money);
 }
+const inTransfer = () => jobs?.job?.offer.kind === 'transfer';
 applyOwnCar();
 
 garage.onSelect = (id) => {
@@ -69,6 +83,92 @@ function openGarage(dealer: string | null) {
   drive.car.vx = drive.car.vy = 0;
   garage.show(dealer);
 }
+
+tuning.blocked = () => (inTransfer() ? 'Mit dem Kundenauto geht hier nichts – erst die Überführung abschließen.' : null);
+tuning.onBuy = (part) => {
+  if (inTransfer()) return;
+  if (profile.buyTuning(profile.current, part)) {
+    applyOwnCar();
+    const lvl = profile.tuneOf(profile.current)[part];
+    drive.hud.message(`${PARTS[part].name}: ${PARTS[part].levels[lvl]} eingebaut`, 2);
+  }
+};
+tuning.onPaint = (c) => {
+  if (inTransfer()) return;
+  profile.setPaint(profile.current, c);
+  applyOwnCar();
+};
+tuning.onClose = () => {
+  drive.input.enabled = mode === 'drive' && !menu?.open;
+  jobs?.garageClosed();
+};
+function openTuning(shop: string) {
+  drive.input.enabled = false;
+  drive.car.vx = drive.car.vy = 0;
+  tuning.show(shop);
+}
+
+/** feste Kartensymbole aus den OSM-Orten und den Renn-Treffpunkten */
+function buildBlips(data: NavData, js: JobSystem): Blip[] {
+  const out: Blip[] = [];
+  const kindOf = (c: string, t: string): BlipKind | null => {
+    if (c === 'shop' && t === 'car') return 'dealer';
+    if (t === 'car_repair' || t === 'tyres') return 'tuning';
+    if (t === 'fuel') return 'fuel';
+    if (t === 'car_wash') return 'wash';
+    if (t === 'police') return 'police';
+    if (t === 'fire_station') return 'fire';
+    if (t === 'hospital') return 'hospital';
+    return null;
+  };
+  data.pois.forEach((p, i) => {
+    const k = kindOf(p.c, p.t);
+    if (k) out.push({ id: `p${i}`, kind: k, x: p.x / 10, y: p.y / 10, name: p.n, target: poiTarget(p) });
+  });
+  for (const r of js.raceSpots)
+    out.push({ id: r.id, kind: 'race', x: r.at.x, y: r.at.y, name: `${r.who} · Einsatz ${formatEuro(r.stake ?? 0)}`, target: r.at, color: r.tier === 2 ? '#111111' : r.tier === 1 ? '#8e1a9e' : undefined });
+  return out;
+}
+
+blips.onClick = (b) => {
+  if (!navi || !b.target) return;
+  navi.setTarget({ ...b.target, label: b.name });
+  missionUi.showToast(`<b>Wegpunkt gesetzt</b><br>${b.name}`, 2.5);
+};
+
+const admin = new AdminPanel({
+  profile,
+  drive,
+  traffic,
+  blips,
+  get places() {
+    return places;
+  },
+  data: () => navData,
+  jobs: () => jobs,
+  navi: () => navi,
+  applyOwnCar: () => (inTransfer() ? undefined : applyOwnCar()),
+  teleport: (x, y, label) => {
+    drive.requestSpawn(x, y);
+    if (mode !== 'drive') setMode('drive');
+    drive.hud.message(`Teleport: ${label}`, 2);
+  },
+  setMapMode: (on) => setMode(on ? 'map' : 'drive'),
+  toast: (html) => missionUi.showToast(html, 2.5),
+});
+
+// Admin: Klick in der Karte teleportiert (nur ohne Ziehen)
+let downAt: [number, number] | null = null;
+canvas.addEventListener('pointerdown', (e) => (downAt = [e.clientX, e.clientY]));
+canvas.addEventListener('pointerup', (e) => {
+  if (!admin.clickTeleport || mode !== 'map' || !downAt) return;
+  if (Math.hypot(e.clientX - downAt[0], e.clientY - downAt[1]) > 5) return;
+  const r = canvas.getBoundingClientRect();
+  const [x, y] = view.toWorld(e.clientX - r.left, e.clientY - r.top);
+  drive.requestSpawn(x, y);
+  setMode('drive');
+  drive.hud.message('Teleport', 1.2);
+});
 let menu: StartMenu | null = null;
 view.scene.add(trafficView.group, trafficView.group3d);
 drive.onView3D = (on) => {
@@ -139,11 +239,11 @@ function setMode(m: Mode) {
 
 window.addEventListener('keydown', (e) => {
   if (e.target instanceof HTMLSelectElement || e.target instanceof HTMLInputElement) return;
-  if (menu?.open) return;
+  if (menu?.open || admin.open) return;
   if (e.code === 'KeyK') setMode(mode === 'drive' ? 'map' : 'drive');
   if (e.code === 'KeyO') openMenu(true);
   if (mode !== 'drive') return;
-  if (garage.open) return;
+  if (garage.open || tuning.open) return;
   if (e.code === 'KeyG') openGarage(null);
   if (e.code === 'KeyX') {
     if (jobs?.job) jobs.cancel();
@@ -201,7 +301,7 @@ async function main() {
     debug.showError(`<b style="color:#c00">Weltdaten fehlen.</b><br>Erst <code>npm run data:build</code> ausführen.<br><span class="muted">${String(e)}</span>`);
     return;
   }
-  const places = await fetch(`${import.meta.env.BASE_URL}world/places.json`).then((r) => r.json() as Promise<Place[]>);
+  places = await fetch(`${import.meta.env.BASE_URL}world/places.json`).then((r) => r.json() as Promise<Place[]>);
   debug.setup(places);
   drive.init();
 
@@ -233,37 +333,50 @@ async function main() {
   // Navigation und Aufträge im Hintergrund laden
   loadNavData(`${import.meta.env.BASE_URL}world`)
     .then((data) => {
+      navData = data;
       navi = new Navigator(view, drive.car, data);
       jobs = new JobSystem(data, data.bus, navi, drive.car, missionUi, drive.hud, profile, markers, view.scene, () => view.time, {
         setCar: (id, color) => {
           const m = carById(id);
           drive.setCar(m.spec, color, m.body);
+          drive.setNitro(0);
         },
         restoreCar: () => applyOwnCar(),
         openGarage: (dealer) => openGarage(dealer),
+        openTuning: (shop) => openTuning(shop),
         money: () => missionUi.setMoney(profile.money),
       }, () => drive.view3D);
-      Object.assign(window as object, { navi, jobs, profile, garage });
+      blips.setStatic(buildBlips(data, jobs));
+      Object.assign(window as object, { navi, jobs, profile, garage, tuning, blips, admin });
     })
     .catch((e) => console.error('Navigationsdaten', e));
 
   let last = performance.now();
   let lastSlow = 0;
   let lastSave = 0;
+  let lastBlips = 0;
   const loop = (t: number) => {
-    const dt = Math.min(0.1, (t - last) / 1000);
+    const dtReal = Math.min(0.1, (t - last) / 1000);
+    const dt = dtReal * admin.timeScale;
     last = t;
+    admin.tick(dtReal);
     drive.update(dt);
     if (drive.spawnedOk) traffic.update(dt);
     trafficView.update(traffic.vehicles);
     navi?.update(dt);
-    jobs?.update(dt, mode === 'drive' && !garage.open && !menu?.open);
+    jobs?.update(dt, mode === 'drive' && !garage.open && !tuning.open && !admin.open && !menu?.open);
     markers.setVisible(mode === 'drive');
     view.render();
     if (mode === 'drive') {
       // Minikarte unten links (CSS-Pixel, Ursprung unten links)
-      view.renderMinimap(16, 16, 210, 210, drive.car.x, drive.car.y, drive.rotateCamera || drive.view3D ? view.rot : Math.PI / 2, 3.2);
+      const miniRot = drive.rotateCamera || drive.view3D ? view.rot : Math.PI / 2;
+      view.renderMinimap(16, 16, 210, 210, drive.car.x, drive.car.y, miniRot, 3.2);
       updateNavHud();
+      blips.update(false, { x: 16, y: 16, w: 210, h: 210, cx: drive.car.x, cy: drive.car.y, rot: miniRot, mpp: 3.2 });
+    } else blips.update(true, null);
+    if (t - lastBlips > 1000 && jobs) {
+      lastBlips = t;
+      blips.setDynamic(jobs.jobBlips());
     }
     labels.focus = [drive.car.x, drive.car.y];
     labels.update(dt);
