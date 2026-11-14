@@ -279,3 +279,48 @@ export function assembleRings(ways: Array<{ ids: number[]; pts: Pt[] }>): Pt[][]
   }
   return rings;
 }
+
+/** mehrere Gebiete (je eigene Ringe, gerade/ungerade-Regel), Punkt liegt drin, wenn in irgendeinem */
+export class RegionSet {
+  private parts: PolygonIndex[];
+  constructor(regions: Pt[][][], cell = 100) {
+    this.parts = regions.filter((r) => r.length).map((r) => new PolygonIndex(r, cell));
+  }
+  contains(p: Pt): boolean {
+    for (const r of this.parts) if (r.contains(p)) return true;
+    return false;
+  }
+}
+
+/** Polylinie zu einem Schlauch-Polygon (Ring) mit halber Breite w aufweiten */
+export function bufferLine(pts: Pt[], w: number): Pt[] {
+  const n = pts.length;
+  if (n < 2) return [];
+  const left: Pt[] = [];
+  const right: Pt[] = [];
+  for (let i = 0; i < n; i++) {
+    const a = pts[Math.max(0, i - 1)];
+    const b = pts[Math.min(n - 1, i + 1)];
+    let dx = b[0] - a[0];
+    let dy = b[1] - a[1];
+    const l = Math.hypot(dx, dy) || 1;
+    dx /= l;
+    dy /= l;
+    // Gehrung begrenzen
+    let k = 1;
+    if (i > 0 && i < n - 1) {
+      const p0 = pts[i - 1];
+      const p1 = pts[i];
+      const p2 = pts[i + 1];
+      const d1 = Math.hypot(p1[0] - p0[0], p1[1] - p0[1]) || 1;
+      const d2 = Math.hypot(p2[0] - p1[0], p2[1] - p1[1]) || 1;
+      const c = ((p1[0] - p0[0]) * (p2[0] - p1[0]) + (p1[1] - p0[1]) * (p2[1] - p1[1])) / (d1 * d2);
+      k = Math.min(2, 1 / Math.max(0.5, Math.sqrt((1 + c) / 2)));
+    }
+    const p = pts[i];
+    left.push([p[0] - dy * w * k, p[1] + dx * w * k]);
+    right.push([p[0] + dy * w * k, p[1] - dx * w * k]);
+  }
+  // Enden etwas verlängern
+  return [...left, ...right.reverse()];
+}

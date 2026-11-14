@@ -2,7 +2,7 @@
  * Liest den OSM-Auszug, projiziert in lokale Meter und schneidet auf das Stadtgebiet zu.
  */
 import type { AreaKind, LineKind, RoadClass } from '@nrs/shared';
-import { assembleRings, PolygonIndex, project, ringArea, ringCentroid, type Pt } from './geo.ts';
+import { assembleRings, bufferLine, project, RegionSet, ringArea, ringCentroid, simplify, type Pt } from './geo.ts';
 import { readOsmPbf, type Member, type Tags } from './pbf/reader.ts';
 import { areaKind, buildingHeight, layerOf, lineKind, roadClass } from './tags.ts';
 
@@ -55,7 +55,8 @@ export interface RawLine {
 
 export interface Extract {
   boundary: Pt[][];
-  inside: PolygonIndex;
+  regions: Region[];
+  inside: RegionSet;
   roads: RawRoad[];
   /** Knoten mit Bedeutung für Verkehrsregelung (Ampeln, Stopp, Vorfahrt, Übergänge) */
   controlNodes: Map<number, RawPoint>;
@@ -153,8 +154,22 @@ class NodeStore {
 
 /** Nürnberg: kreisfreie Stadt, OSM-Relation 62780 */
 const CITY_RELATION = 62780;
-/** Grobe Box mit Rand um das Stadtgebiet (WGS84), um Projektion zu sparen */
-const BOX = { minLon: 10.93, maxLon: 11.26, minLat: 49.3, maxLat: 49.58 };
+/** Roth (Große Kreisstadt, Landkreis Roth), OSM-Relation 158556 */
+const ROTH_RELATION = 158556;
+/** Ortsmitte Roth (Marktplatz) – Ziel der Verbindungsstraße */
+const ROTH_CENTER: [number, number] = [11.0909, 49.2459];
+/** Breite (halb) des befahrbaren Korridors zwischen den Städten, m */
+const CORRIDOR_W = 160;
+/** Grobe Box mit Rand um die Stadtgebiete (WGS84), um Projektion zu sparen */
+const BOX = { minLon: 10.93, maxLon: 11.26, minLat: 49.17, maxLat: 49.58 };
+
+/** Gebiete der Spielwelt */
+export interface Region {
+  name: string;
+  rings: Pt[][];
+  /** Korridor: nicht als Stadtgrenze zeichnen */
+  corridor?: boolean;
+}
 
 export function extract(pbfPath: string, log: (s: string) => void): Extract {
   const nodes = new NodeStore();
@@ -199,7 +214,8 @@ export function extract(pbfPath: string, log: (s: string) => void): Extract {
       if (tags) {
         if (isControl(tags)) controlNodes.set(id, { id, p: [x, y], tags });
         const isBusStop =
-          tags.highway === 'bus_stop' || ((tags.public_transport === 'platform' || tags.public_transport === 'stop_position') && (tags.bus === 'yes' || tags.highway === 'bus_stop'));
+          tags.highway === 'bus_stop' ||
+          ((tags.public_transport === 'platform' || tags.public_transport === 'stop_position') && (tags.bus === 'yes' || tags.highway === 'bus_stop'));
         if (isBusStop && tags.name) busStops.set(id, { name: tags.name, p: [x, y] });
         if (tags.natural === 'tree') {
           const dc = parseFloat(tags.diameter_crown ?? '');
@@ -211,7 +227,18 @@ export function extract(pbfPath: string, log: (s: string) => void): Extract {
           const pc = poiCat(tags);
           if (pc) poiPts.push({ name: pname, ...pc, p: [x, y] });
         }
-        if (tags.name && (tags.place === 'suburb' || tags.place === 'quarter' || tags.place === 'neighbourhood' || tags.place === 'village' || tags.place === 'hamlet' || tags.tourism === 'attraction' || tags.railway === 'station' || tags.amenity === 'townhall'))
+        if (
+          tags.name &&
+          (tags.place === 'town' ||
+            tags.place === 'suburb' ||
+            tags.place === 'quarter' ||
+            tags.place === 'neighbourhood' ||
+            tags.place === 'village' ||
+            tags.place === 'hamlet' ||
+            tags.tourism === 'attraction' ||
+            tags.railway === 'station' ||
+            tags.amenity === 'townhall')
+        )
           placeNodes.push({ name: tags.name, p: [x, y], kind: tags.place ?? tags.tourism ?? tags.railway ?? tags.amenity ?? '' });
       }
     },
@@ -227,7 +254,7 @@ export function extract(pbfPath: string, log: (s: string) => void): Extract {
     },
     relation(id, members, tags) {
       const t = tags.type;
-      if (t === 'multipolygon' || t === 'restriction' || id === CITY_RELATION || t === 'building') relations.push({ id, members, tags });
+      if (t === 'multipolygon' || t === 'restriction' || id === CITY_RELATION || id === ROTH_RELATION || t === 'building') relations.push({ id, members, tags });
       if (t === 'route' && (tags.route === 'bus' || tags.route === 'trolleybus')) busRels.push({ id, members, tags });
     },
   });
@@ -255,8 +282,35 @@ export function extract(pbfPath: string, log: (s: string) => void): Extract {
     .filter((w): w is { ids: number[]; pts: Pt[] } => !!w);
   const boundary = assembleRings(outerWays);
   if (!boundary.length) throw new Error('Stadtgrenze konnte nicht zusammengesetzt werden');
-  const inside = new PolygonIndex(boundary, 100);
-  log(`  Stadtgrenze: ${boundary.length} Ring(e), ${boundary.reduce((a, r) => a + r.length, 0)} Punkte, ${(Math.abs(boundary.reduce((a, r) => a + ringArea(r), 0)) / 1e6).toFixed(1)} km²`);
+  const regions: Region[] = [{ name: 'Nürnberg', rings: boundary }];
+  // Roth
+  const rothRel = relations.find((r) => r.id === ROTH_RELATION);
+  if (rothRel) {
+    const rw = rothRel.members
+      .filter((m) => m.type === 'way' && m.role !== 'inner')
+      .map((m) => resolve(memberCandidates.get(m.ref) ?? []))
+      .filter((w): w is { ids: number[]; pts: Pt[] } => !!w);
+    const rings = assembleRings(rw);
+    if (rings.length) {
+      regions.push({ name: 'Roth', rings });
+      log(`  Roth: ${rings.length} Ring(e), ${(Math.abs(rings.reduce((a, r) => a + ringArea(r), 0)) / 1e6).toFixed(1)} km²`);
+      const path = mainRoadPath(roadWays, resolve, [0, 0], project(ROTH_CENTER[0], ROTH_CENTER[1]));
+      if (path.length > 1) {
+        const ring = bufferLine(simplify(path, 40), CORRIDOR_W);
+        regions.push({ name: 'Verbindungsstraße', rings: [ring], corridor: true });
+        let len = 0;
+        for (let i = 1; i < path.length; i++) len += Math.hypot(path[i][0] - path[i - 1][0], path[i][1] - path[i - 1][1]);
+        log(`  Verbindung Nürnberg – Roth: ${(len / 1000).toFixed(1)} km`);
+      } else log('  Keine Straßenverbindung nach Roth gefunden');
+    }
+  } else log('  Roth (Relation 158556) nicht gefunden');
+  const inside = new RegionSet(
+    regions.map((r) => r.rings),
+    100,
+  );
+  log(
+    `  Stadtgrenze: ${boundary.length} Ring(e), ${boundary.reduce((a, r) => a + r.length, 0)} Punkte, ${(Math.abs(boundary.reduce((a, r) => a + ringArea(r), 0)) / 1e6).toFixed(1)} km²`,
+  );
 
   const anyInside = (pts: Pt[]) => pts.some((p) => inside.contains(p));
   // Puffer: Straßen knapp außerhalb der Grenze behalten, damit Kreuzungen an der Grenze vollständig sind
@@ -278,7 +332,17 @@ export function extract(pbfPath: string, log: (s: string) => void): Extract {
     if (!inside.contains(ringCentroid(outer))) return;
     if (tags.building === 'roof' || tags.location === 'underground') return;
     const { h, minH } = buildingHeight(tags);
-    buildings.push({ id, t: tags.building ?? 'yes', h, minH, outer, holes, name: tags.name, rs: tags['roof:shape'], rc: parseColour(tags['roof:colour'] ?? tags['building:roof:colour']) });
+    buildings.push({
+      id,
+      t: tags.building ?? 'yes',
+      h,
+      minH,
+      outer,
+      holes,
+      name: tags.name,
+      rs: tags['roof:shape'],
+      rc: parseColour(tags['roof:colour'] ?? tags['building:roof:colour']),
+    });
   };
   for (const w of buildingWays) {
     const r = resolve(w.refs);
@@ -412,8 +476,25 @@ export function extract(pbfPath: string, log: (s: string) => void): Extract {
   }
   log(`  ${busLines.length} Buslinien (Fahrtrichtungen), ${busStops.size.toLocaleString('de')} Haltestellen`);
 
-  log(`  Im Stadtgebiet: ${roads.length.toLocaleString('de')} Straßen, ${buildings.length.toLocaleString('de')} Gebäude, ${areas.length.toLocaleString('de')} Flächen, ${lines.length.toLocaleString('de')} Linien`);
-  return { boundary, inside, roads, controlNodes, restrictions, buildings, areas, lines, places, trees, busLines, addresses, pois };
+  log(
+    `  Im Stadtgebiet: ${roads.length.toLocaleString('de')} Straßen, ${buildings.length.toLocaleString('de')} Gebäude, ${areas.length.toLocaleString('de')} Flächen, ${lines.length.toLocaleString('de')} Linien`,
+  );
+  return {
+    boundary: regions.filter((r) => !r.corridor).flatMap((r) => r.rings),
+    regions,
+    inside,
+    roads,
+    controlNodes,
+    restrictions,
+    buildings,
+    areas,
+    lines,
+    places,
+    trees,
+    busLines,
+    addresses,
+    pois,
+  };
 }
 
 function pointInRingSafe(p: Pt, ring: Pt[]): boolean {
@@ -454,4 +535,95 @@ function parseColour(v: string | undefined): number | undefined {
   if (/^#[0-9a-f]{6}$/.test(s)) return parseInt(s.slice(1), 16);
   if (/^#[0-9a-f]{3}$/.test(s)) return parseInt(s[1] + s[1] + s[2] + s[2] + s[3] + s[3], 16);
   return NAMED_COLOURS[s.replace(/[\s_-]/g, '')];
+}
+
+/** kürzester Weg über Hauptstraßen (für die Verbindung zwischen den Städten) */
+function mainRoadPath(ways: Array<{ refs: number[]; tags: Tags }>, resolve: (refs: number[]) => { ids: number[]; pts: Pt[] } | null, from: Pt, to: Pt): Pt[] {
+  const COST: Record<string, number> = { trunk: 0.8, primary: 0.85, secondary: 1, trunk_link: 1, primary_link: 1, secondary_link: 1.1, tertiary: 1.4 };
+  const adj = new Map<number, Array<[number, number]>>();
+  const pos = new Map<number, Pt>();
+  for (const w of ways) {
+    const c = COST[w.tags.highway ?? ''];
+    if (!c) continue;
+    const r = resolve(w.refs);
+    if (!r) continue;
+    const ow = w.tags.oneway === 'yes' || w.tags.oneway === '1' || w.tags.junction === 'roundabout';
+    for (let i = 0; i < r.ids.length; i++) {
+      pos.set(r.ids[i], r.pts[i]);
+      if (i === 0) continue;
+      const a = r.ids[i - 1];
+      const b = r.ids[i];
+      const d = Math.hypot(r.pts[i][0] - r.pts[i - 1][0], r.pts[i][1] - r.pts[i - 1][1]) * c;
+      if (!adj.has(a)) adj.set(a, []);
+      if (!adj.has(b)) adj.set(b, []);
+      adj.get(a)!.push([b, d]);
+      if (!ow) adj.get(b)!.push([a, d]);
+    }
+  }
+  const nearest = (p: Pt) => {
+    let best = -1;
+    let bd = Infinity;
+    for (const [id, q] of pos) {
+      if (!adj.get(id)?.length) continue;
+      const d = Math.hypot(q[0] - p[0], q[1] - p[1]);
+      if (d < bd) {
+        bd = d;
+        best = id;
+      }
+    }
+    return best;
+  };
+  const s = nearest(from);
+  const t = nearest(to);
+  if (s < 0 || t < 0) return [];
+  // Dijkstra mit einfachem Binärheap
+  const dist = new Map<number, number>([[s, 0]]);
+  const prev = new Map<number, number>();
+  const heap: Array<[number, number]> = [[0, s]];
+  const push = (e: [number, number]) => {
+    heap.push(e);
+    let i = heap.length - 1;
+    while (i > 0) {
+      const p = (i - 1) >> 1;
+      if (heap[p][0] <= heap[i][0]) break;
+      [heap[p], heap[i]] = [heap[i], heap[p]];
+      i = p;
+    }
+  };
+  const pop = (): [number, number] => {
+    const top = heap[0];
+    const last = heap.pop()!;
+    if (heap.length) {
+      heap[0] = last;
+      let i = 0;
+      for (;;) {
+        const l = i * 2 + 1;
+        const r = l + 1;
+        let m = i;
+        if (l < heap.length && heap[l][0] < heap[m][0]) m = l;
+        if (r < heap.length && heap[r][0] < heap[m][0]) m = r;
+        if (m === i) break;
+        [heap[m], heap[i]] = [heap[i], heap[m]];
+        i = m;
+      }
+    }
+    return top;
+  };
+  while (heap.length) {
+    const [d, u] = pop();
+    if (u === t) break;
+    if (d > (dist.get(u) ?? Infinity)) continue;
+    for (const [v, w] of adj.get(u) ?? []) {
+      const nd = d + w;
+      if (nd < (dist.get(v) ?? Infinity)) {
+        dist.set(v, nd);
+        prev.set(v, u);
+        push([nd, v]);
+      }
+    }
+  }
+  if (!dist.has(t)) return [];
+  const out: Pt[] = [];
+  for (let u: number | undefined = t; u !== undefined; u = prev.get(u)) out.push(pos.get(u)!);
+  return out.reverse();
 }

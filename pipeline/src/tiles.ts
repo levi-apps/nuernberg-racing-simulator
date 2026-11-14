@@ -256,6 +256,7 @@ export function writeWorld(
     tiles: keys.sort(),
     bounds: bb,
     boundary: ex.boundary.map((r) => flat(simplify([...r, r[0]], 5))),
+    regions: ex.regions.map((g) => ({ name: g.name, rings: g.rings.map((r) => flat(simplify([...r, r[0]], 5))), ...(g.corridor ? { corridor: true } : {}) })),
     stats: {
       segments: net.segments.length,
       lanes: net.lanes.length,

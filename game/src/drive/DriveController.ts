@@ -68,6 +68,7 @@ export class DriveController {
   damage: CarDamage;
   private wreckWarned = false;
   private body: Body | null = null;
+  private lastRegion = '';
   constructor(private view: WorldView) {
     this.fx = new DriveFx(view.scene);
     this.damage = new CarDamage(view.scene);
@@ -225,11 +226,16 @@ export class DriveController {
       }
       // Stadtgrenze
       if (this.infoTimer <= 0) {
-        const inside = this.query.insideCity(car.x, car.y);
+        const region = this.query.regionAt(car.x, car.y);
+        const inside = region !== null;
+        if (region && !region.corridor && region.name !== this.lastRegion) {
+          if (this.lastRegion) this.hud.message(`Willkommen in ${region.name}`, 2.5);
+          this.lastRegion = region.name;
+        }
         if (!inside) {
           car.vx *= 0.9;
           car.vy *= 0.9;
-          if (!this.outsideWarned) this.hud.message('Stadtgrenze – hier endet Nürnberg', 2.5);
+          if (!this.outsideWarned) this.hud.message('Ende der Spielwelt – hier geht es nicht weiter', 2.5);
         }
         this.outsideWarned = !inside;
       }

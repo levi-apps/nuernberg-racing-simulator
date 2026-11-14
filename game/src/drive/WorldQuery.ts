@@ -98,12 +98,16 @@ export interface SurfaceInfo {
 }
 
 export class WorldQuery {
-  private boundary: Float64Array[] = [];
+  private regions: Array<{ name: string; rings: Float64Array[]; corridor: boolean }> = [];
 
   constructor(private view: WorldView) {}
 
   init(): void {
-    this.boundary = this.view.manifest.boundary.map((r) => Float64Array.from(r, (v) => v / 10));
+    const m = this.view.manifest;
+    const conv = (r: number[]) => Float64Array.from(r, (v) => v / 10);
+    this.regions = m.regions?.length
+      ? m.regions.map((g) => ({ name: g.name, rings: g.rings.map(conv), corridor: !!g.corridor }))
+      : [{ name: 'Nürnberg', rings: m.boundary.map(conv), corridor: false }];
   }
 
   private tiles(x: number, y: number, r = 1): Tile[] {
@@ -156,9 +160,17 @@ export class WorldQuery {
     return out;
   }
 
+  /** Gebiet an einer Stelle (Stadt oder Verbindungsstraße), null = außerhalb der Spielwelt */
+  regionAt(x: number, y: number): { name: string; corridor: boolean } | null {
+    for (const g of this.regions) {
+      let inside = false;
+      for (const r of g.rings) if (ringContains(r, x, y)) inside = !inside;
+      if (inside) return g;
+    }
+    return null;
+  }
+
   insideCity(x: number, y: number): boolean {
-    let inside = false;
-    for (const r of this.boundary) if (ringContains(r, x, y)) inside = !inside;
-    return inside;
+    return this.regionAt(x, y) !== null;
   }
 }

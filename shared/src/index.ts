@@ -280,6 +280,8 @@ export interface Manifest {
   bounds: { minX: number; minY: number; maxX: number; maxY: number };
   /** Stadtgrenze (dm, vereinfacht) */
   boundary: number[][];
+  /** Gebiete der Spielwelt (Städte und Verbindungsstraßen); ring = Index in boundary oder eigener Ring */
+  regions?: Array<{ name: string; rings: number[][]; corridor?: boolean }>;
   stats: Record<string, number>;
 }
 
