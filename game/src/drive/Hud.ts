@@ -29,6 +29,7 @@ export class Hud {
       '<b>A D / ← →</b> lenken',
       '<b>Leertaste</b> Handbremse',
       '<b>R</b> zurück auf die Straße',
+      '<b>V</b> 3D-Ansicht / Draufsicht',
       '<b>C</b> Kamera drehen',
       '<b>T</b> Verkehr an/aus, <b>+ / −</b> Dichte',
       '<b>1</b> Taxi, <b>2</b> Kurier, <b>X</b> beenden',

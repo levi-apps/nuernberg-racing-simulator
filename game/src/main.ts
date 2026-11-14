@@ -23,7 +23,15 @@ const missionUi = new MissionUi();
 let navi: Navigator | null = null;
 let missions: Missions | null = null;
 let menu: StartMenu | null = null;
-view.scene.add(trafficView.group);
+view.scene.add(trafficView.group, trafficView.group3d);
+drive.onView3D = (on) => {
+  trafficView.set3D(on);
+  try {
+    localStorage.setItem('nrs.view3d', on ? '1' : '0');
+  } catch {
+    /* egal */
+  }
+};
 view.onTileLoaded = (t) => traffic.graph.addTile(t);
 drive.traffic = traffic;
 drive.onTeleport = () => traffic.clear();
@@ -169,6 +177,11 @@ async function main() {
     drive.input.enabled = mode === 'drive';
   };
   if (!h) openMenu(false);
+  try {
+    if (localStorage.getItem('nrs.view3d') === '1') drive.setView3D(true);
+  } catch {
+    /* egal */
+  }
 
   // Navigation und Aufträge im Hintergrund laden
   loadNavData(`${import.meta.env.BASE_URL}world`)
@@ -193,7 +206,7 @@ async function main() {
     view.render();
     if (mode === 'drive') {
       // Minikarte unten links (CSS-Pixel, Ursprung unten links)
-      view.renderMinimap(16, 16, 210, 210, drive.car.x, drive.car.y, drive.rotateCamera ? drive.car.heading : Math.PI / 2, 3.2);
+      view.renderMinimap(16, 16, 210, 210, drive.car.x, drive.car.y, drive.rotateCamera || drive.view3D ? view.rot : Math.PI / 2, 3.2);
       updateNavHud();
     }
     labels.focus = [drive.car.x, drive.car.y];

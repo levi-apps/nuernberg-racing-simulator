@@ -52,23 +52,30 @@ export class StreetLabels {
     }
     const w = window.innerWidth;
     const h = window.innerHeight;
-    const r = (Math.hypot(w, h) / 2) * v.mpp;
+    const r = v.use3d && v.mode === 'drive' ? v.radius3d : (Math.hypot(w, h) / 2) * v.mpp;
     const fx = this.focus?.[0] ?? v.cx;
     const fy = this.focus?.[1] ?? v.cy;
     // Kandidaten sammeln
-    const cands: Array<{ l: RoadLabel; sx: number; sy: number; score: number }> = [];
+    const cands: Array<{ l: RoadLabel; sx: number; sy: number; ang: number; score: number }> = [];
     const seen = new Set<RoadLabel>();
     for (const t of v.tilesAround(v.cx, v.cy, r)) {
       for (const l of t.labels ?? []) {
         if (seen.has(l)) continue;
         seen.add(l);
-        const [sx, sy] = v.toScreen(l.x / 10, l.y / 10);
+        const wx = l.x / 10;
+        const wy = l.y / 10;
+        const d = Math.hypot(wx - fx, wy - fy);
+        if (v.use3d && v.mode === 'drive' && d > 110) continue;
+        const [sx, sy] = v.toScreen(wx, wy);
         if (sx < -50 || sy < -20 || sx > w + 50 || sy > h + 20) continue;
-        // zu kurz für den Text bei diesem Maßstab?
+        // Richtung und Länge auf dem Bildschirm (über einen zweiten Punkt entlang der Straße)
+        const a = (l.a * Math.PI) / 180;
+        const half = Math.min(l.len / 2, 20);
+        const [ex, ey] = v.toScreen(wx + Math.cos(a) * half, wy + Math.sin(a) * half);
+        const pxPerM = Math.hypot(ex - sx, ey - sy) / half;
         const textPx = l.n.length * 6.6 + 8;
-        if (l.len / v.mpp < textPx * 0.7) continue;
-        const d = Math.hypot(l.x / 10 - fx, l.y / 10 - fy);
-        cands.push({ l, sx, sy, score: (PRIO[l.cls] ?? 1) * 40 - d * 0.15 + (l.layer > 0 ? 5 : 0) });
+        if (l.len * pxPerM < textPx * 0.7) continue;
+        cands.push({ l, sx, sy, ang: Math.atan2(ey - sy, ex - sx), score: (PRIO[l.cls] ?? 1) * 40 - d * 0.15 + (l.layer > 0 ? 5 : 0) });
       }
     }
     cands.sort((a, b) => b.score - a.score);
@@ -81,7 +88,7 @@ export class StreetLabels {
       const fontPx = major ? 13 : 11.5;
       const tw = c.l.n.length * fontPx * 0.56 + 8;
       // Bildschirmwinkel: Weltwinkel relativ zur Kameradrehung, lesbar halten
-      let ang = -(c.l.a * Math.PI) / 180 + (v.rot - Math.PI / 2);
+      let ang = c.ang;
       while (ang > Math.PI / 2) ang -= Math.PI;
       while (ang <= -Math.PI / 2) ang += Math.PI;
       const cs = Math.abs(Math.cos(ang));

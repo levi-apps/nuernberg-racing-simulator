@@ -21,6 +21,11 @@ export class DriveController {
   active = true;
   /** Kamera dreht mit dem Auto (sonst Norden oben) */
   rotateCamera = false;
+  /** 3D-Verfolgerkamera */
+  view3D = false;
+  private camHeading = 0;
+  private camSpeed = 0;
+  onView3D?: (on: boolean) => void;
   private acc = 0;
   private infoTimer = 0;
   private camVX = 0;
@@ -42,7 +47,7 @@ export class DriveController {
   constructor(private view: WorldView) {
     this.mesh = new CarMesh(this.car);
     this.query = new WorldQuery(view);
-    view.scene.add(this.mesh.group);
+    view.scene.add(this.mesh.group, this.mesh.group3d);
     window.addEventListener(
       'wheel',
       (e) => {
@@ -80,6 +85,7 @@ export class DriveController {
     this.hud.visible = a;
     this.view.setMode(a ? 'drive' : 'map');
     if (!a) this.view.rot = Math.PI / 2;
+    this.mesh.set3D(a && this.view3D);
   }
 
   /** Startposition: gewünschter Ort, sobald die Kacheln dort geladen sind */
@@ -113,6 +119,7 @@ export class DriveController {
         this.hud.message(this.rotateCamera ? 'Kamera dreht mit' : 'Norden oben', 1.2);
       }
       if (this.input.wasPressed('KeyH')) this.hud.toggleHelp();
+      if (this.input.wasPressed('KeyV')) this.setView3D(!this.view3D);
       if (this.input.wasPressed('KeyT') && this.traffic) {
         this.traffic.enabled = !this.traffic.enabled;
         if (!this.traffic.enabled) this.traffic.clear();
@@ -176,6 +183,15 @@ export class DriveController {
     if (this.active) this.updateCamera(dt);
   }
 
+  setView3D(on: boolean): void {
+    this.view3D = on;
+    this.view.use3d = on;
+    this.mesh.set3D(on);
+    this.camHeading = this.car.heading;
+    this.hud.message(on ? '3D-Ansicht' : 'Draufsicht', 1.2);
+    this.onView3D?.(on);
+  }
+
   private resetToRoad(): void {
     const hit = this.view.nearestLane(this.car.x, this.car.y, 300, true);
     if (hit) {
@@ -213,6 +229,30 @@ export class DriveController {
     const v = this.view;
     const car = this.car;
     const speed = Math.hypot(car.vx, car.vy);
+    if (this.view3D) {
+      // Verfolgerkamera: folgt der Fahrtrichtung gedämpft, weiter weg bei hohem Tempo
+      let d = car.heading - this.camHeading;
+      while (d > Math.PI) d -= 2 * Math.PI;
+      while (d < -Math.PI) d += 2 * Math.PI;
+      // rückwärts nicht herumschwenken
+      const follow = car.speed < -1 ? 0.6 : 3.2;
+      this.camHeading += d * (1 - Math.exp(-dt * follow));
+      this.camSpeed += (Math.min(speed, 45) - this.camSpeed) * (1 - Math.exp(-dt * 1.2));
+      const z = this.zoomUser;
+      const back = (15 + this.camSpeed * 0.3) * z;
+      const up = (15 + this.camSpeed * 0.26) * z;
+      const ahead = 8 + this.camSpeed * 0.5;
+      const hx = Math.cos(this.camHeading);
+      const hy = Math.sin(this.camHeading);
+      v.cam3dPos.set(car.x - hx * back, car.y - hy * back, up);
+      v.cam3dTarget.set(car.x + hx * ahead, car.y + hy * ahead, 0);
+      // Kachelauswahl um einen Punkt vor dem Auto; Maßstab für Detailstufen
+      v.cx = car.x + hx * (ahead + 60);
+      v.cy = car.y + hy * (ahead + 60);
+      v.mpp = 0.12;
+      v.rot = this.camHeading;
+      return;
+    }
     // Vorausschau in Fahrtrichtung, geglättet
     const k = 1 - Math.exp(-dt * 3);
     this.camVX += (car.vx - this.camVX) * k;

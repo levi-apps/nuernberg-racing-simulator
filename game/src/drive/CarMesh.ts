@@ -31,7 +31,12 @@ function roundedRect(l: number, w: number, r: number): Array<[number, number]> {
 
 export class CarMesh {
   group = new THREE.Group();
+  /** 3D-Version (Karosserie, Kabine, Räder) */
+  group3d = new THREE.Group();
+  private parts2d: THREE.Object3D[] = [];
   private frontWheels: THREE.Mesh[] = [];
+  private frontWheels3d: THREE.Object3D[] = [];
+  private brake3d: THREE.MeshLambertMaterial;
   private tailMat = mat(0x8a0d16);
   private reverseMat = mat(0x666666);
 
@@ -47,8 +52,9 @@ export class CarMesh {
       this.group.add(mesh);
       return mesh;
     };
-    // Schatten
+    // Schatten (bleibt auch in 3D sichtbar)
     add(shape(roundedRect(L + 0.3, W + 0.3, 0.5)), mat(0x000000, 0.22), 0, -0.25, -0.3);
+    const nShadow = this.group.children.length;
     // Räder (schauen leicht unter der Karosserie hervor)
     const wheelGeo = new THREE.PlaneGeometry(0.72, 0.26);
     const wheelMat = mat(0x1b1b1b);
@@ -89,12 +95,55 @@ export class CarMesh {
     // Rückleuchten
     for (const sy of [1, -1]) add(new THREE.PlaneGeometry(0.14, 0.42), this.tailMat, 5, -L / 2 + 0.09, sy * (W / 2 - 0.32));
     add(new THREE.PlaneGeometry(0.12, 0.3), this.reverseMat, 5, -L / 2 + 0.08, 0);
+    this.parts2d = this.group.children.slice(nShadow);
+
+    // ---------------- 3D
+    const lam = (c: number) => new THREE.MeshLambertMaterial({ color: c, transparent: true });
+    const box3 = (l: number, w: number, h: number, m: THREE.Material, x: number, y: number, z: number) => {
+      const b = new THREE.Mesh(new THREE.BoxGeometry(l, w, h), m);
+      b.position.set(x, y, z);
+      b.renderOrder = 25;
+      b.layers.set(1);
+      this.group3d.add(b);
+      return b;
+    };
+    const body = lam(color);
+    box3(L, W, 0.62, body, 0, 0, 0.55); // Unterbau
+    box3(L * 0.86, W * 0.96, 0.18, body, -L * 0.02, 0, 0.95); // Gürtellinie
+    box3(L * 0.5, W * 0.84, 0.5, lam(0x2a3540), -L * 0.08, 0, 1.28); // Kabine (Glas)
+    box3(L * 0.42, W * 0.8, 0.06, lam(new THREE.Color(color).lerp(new THREE.Color(0xffffff), 0.12).getHex()), -L * 0.1, 0, 1.55); // Dach
+    box3(0.1, 0.42, 0.18, lam(0xfff3b0), L / 2, W / 2 - 0.35, 0.72);
+    box3(0.1, 0.42, 0.18, lam(0xfff3b0), L / 2, -W / 2 + 0.35, 0.72);
+    this.brake3d = lam(0x8a0d16) as THREE.MeshLambertMaterial;
+    box3(0.1, 0.42, 0.16, this.brake3d, -L / 2, W / 2 - 0.35, 0.78);
+    box3(0.1, 0.42, 0.16, this.brake3d, -L / 2, -W / 2 + 0.35, 0.78);
+    const tire = lam(0x1b1b1b);
+    for (const sx of [1, -1])
+      for (const sy of [1, -1]) {
+        const wheel = new THREE.Mesh(new THREE.CylinderGeometry(0.33, 0.33, 0.24, 12), tire);
+        wheel.position.set(sx * L * 0.31, sy * (W / 2 - 0.05), 0.33);
+        wheel.renderOrder = 25;
+        wheel.layers.set(1);
+        this.group3d.add(wheel);
+        if (sx === 1) this.frontWheels3d.push(wheel);
+      }
+    this.group3d.visible = false;
+    for (const o of this.group3d.children) o.frustumCulled = false;
+  }
+
+  set3D(on: boolean): void {
+    this.group3d.visible = on;
+    for (const p of this.parts2d) p.visible = !on;
   }
 
   update(car: Car): void {
     this.group.position.set(car.x, car.y, 0);
     this.group.rotation.z = car.heading;
+    this.group3d.position.set(car.x, car.y, 0);
+    this.group3d.rotation.z = car.heading;
     for (const w of this.frontWheels) w.rotation.z = car.steer * 0.5;
+    for (const w of this.frontWheels3d) w.rotation.z = car.steer * 0.5;
+    this.brake3d.color.setHex(car.braking ? 0xff2a2a : 0x8a0d16);
     this.tailMat.color.setHex(car.braking ? 0xff2a2a : 0x8a0d16);
     this.reverseMat.color.setHex(car.reversing ? 0xffffff : 0x666666);
   }

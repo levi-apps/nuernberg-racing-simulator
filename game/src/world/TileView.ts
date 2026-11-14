@@ -6,6 +6,7 @@ import * as THREE from 'three';
 import type { Building, LaneControl, Tile } from '@nrs/shared';
 import { FillBuilder, LineBuilder, MarkerBuilder, toM } from './geometry.ts';
 import { Pat, SHADOW_DIR, SHADOW_MAT, surfaceMat, TO_SUN } from './materials.ts';
+import { buildTile3D } from './Tile3D.ts';
 import {
   AREA_COLORS,
   AREA_PATTERN,
@@ -113,29 +114,36 @@ export interface SignalGroup {
   palette: Record<SignalState, number>;
 }
 
-const hash = (n: number): number => {
+export const hash = (n: number): number => {
   let h = Math.imul(n ^ 0x9e3779b9, 0x85ebca6b);
   h ^= h >>> 13;
   h = Math.imul(h, 0xc2b2ae35);
   h ^= h >>> 16;
   return (h >>> 0) / 4294967296;
 };
-const pick = <T>(arr: T[], n: number): T => arr[Math.floor(hash(n) * arr.length) % arr.length];
+export const pick = <T>(arr: T[], n: number): T => arr[Math.floor(hash(n) * arr.length) % arr.length];
 const tmpC = new THREE.Color();
-const shade = (c: number, f: number): number => tmpC.setHex(c).multiplyScalar(Math.max(0, f)).getHex();
+export const shade = (c: number, f: number): number => tmpC.setHex(c).multiplyScalar(Math.max(0, f)).getHex();
+
+export type Dim = '2d' | '3d';
 
 export class TileView {
   group = new THREE.Group();
   layers = new Map<LayerName, THREE.Object3D[]>();
   signalGroups: SignalGroup[] = [];
+  /** aktuelle Darstellung: Draufsicht oder 3D */
+  dim: Dim = '2d';
+  private built3d = false;
 
   constructor(public tile: Tile) {
     this.build();
   }
 
-  private add(layer: LayerName, obj: THREE.Object3D, order: number) {
+  /** dim: Objekt nur in dieser Darstellung zeigen */
+  private add(layer: LayerName, obj: THREE.Object3D, order: number, dim?: Dim) {
     obj.renderOrder = order;
     obj.frustumCulled = false;
+    if (dim) obj.userData.dim = dim;
     if (!MINIMAP_LAYERS.has(layer)) obj.layers.set(RL_MAIN);
     this.group.add(obj);
     const l = this.layers.get(layer) ?? [];
@@ -143,8 +151,17 @@ export class TileView {
     this.layers.set(layer, l);
   }
 
-  private mesh(layer: LayerName, b: FillBuilder, mat: THREE.Material, order: number) {
-    if (!b.empty) this.add(layer, new THREE.Mesh(b.build(), mat), order);
+  private mesh(layer: LayerName, b: FillBuilder, mat: THREE.Material, order: number, dim?: Dim) {
+    if (!b.empty) this.add(layer, new THREE.Mesh(b.build(), mat), order, dim);
+  }
+
+  /** 3D-Körper bei Bedarf erzeugen (erst beim ersten Wechsel in die 3D-Ansicht) */
+  ensure3D(): void {
+    if (this.built3d) return;
+    this.built3d = true;
+    const t3 = buildTile3D(this.tile);
+    for (const o of t3.objects) this.add(o.userData.layer as LayerName, o, o.renderOrder, '3d');
+    if (t3.lampAttr) this.signalGroups.push({ attr: t3.lampAttr, slots: t3.lampSlots, palette: LAMP });
   }
 
   private build() {
@@ -268,9 +285,9 @@ export class TileView {
     }
 
     this.mesh('buildings', shadows, SHADOW_MAT, ORDER.shadows);
-    this.mesh('buildings', roofs, surfaceMat(Pat.Roof), ORDER.buildings);
-    this.mesh('buildings', edges, MATERIALS.fill, ORDER.buildingEdges);
-    this.mesh('trees', trees, surfaceMat(Pat.Canopy), ORDER.trees);
+    this.mesh('buildings', roofs, surfaceMat(Pat.Roof), ORDER.buildings, '2d');
+    this.mesh('buildings', edges, MATERIALS.fill, ORDER.buildingEdges, '2d');
+    this.mesh('trees', trees, surfaceMat(Pat.Canopy), ORDER.trees, '2d');
 
     // ---------------------------------------------------------------- Ampeln
     const housing = new FillBuilder();
@@ -321,11 +338,11 @@ export class TileView {
         head(ex, ey);
       }
     }
-    this.mesh('signals', housing, MATERIALS.fill, ORDER.signals);
+    this.mesh('signals', housing, MATERIALS.fill, ORDER.signals, '2d');
     if (!lamps.empty) {
       const g = lamps.build();
       this.signalGroups.push({ attr: g.getAttribute('color') as THREE.BufferAttribute, slots: lampSlots, palette: LAMP });
-      this.add('signals', new THREE.Mesh(g, MATERIALS.marker), ORDER.signals + 0.1);
+      this.add('signals', new THREE.Mesh(g, MATERIALS.marker), ORDER.signals + 0.1, '2d');
     }
     if (!glow.empty) {
       const g = glow.build();
@@ -378,7 +395,7 @@ export class TileView {
   }
 
   setLayerVisible(layer: LayerName, visible: boolean) {
-    for (const o of this.layers.get(layer) ?? []) o.visible = visible;
+    for (const o of this.layers.get(layer) ?? []) o.visible = visible && (!o.userData.dim || o.userData.dim === this.dim);
   }
 
   dispose() {
@@ -421,35 +438,30 @@ const GABLE = new Set(['gabled', 'half-hipped', 'gambrel', 'saltbox', 'mansard',
 const HIP = new Set(['hipped', 'pyramidal']);
 const FLATS = new Set(['flat', 'skillion', 'dome', 'many', 'onion']);
 
-/** Dach eines Gebäudes von oben: Dachflächen je nach Form unterschiedlich hell, Kante, Schatten */
-function buildRoof(b: Building, roofs: FillBuilder, edges: FillBuilder, shadows: FillBuilder): void {
+export interface RoofInfo {
+  pts: Array<[number, number]>;
+  ccw: boolean;
+  area: number;
+  color: number;
+  /** flach, Facetten (rechteckig, First r0-r1) oder Band (verwinkeltes Steildach) */
+  kind: 'flat' | 'facet' | 'band';
+  r0: [number, number];
+  r1: [number, number];
+  half: number;
+  wid: number;
+  band: number;
+}
+
+/** Form, Farbe und First eines Daches bestimmen (gemeinsam für 2D und 3D) */
+export function roofInfo(b: Building): RoofInfo | null {
   const pts = toM(b.outer);
   const n = pts.length;
-  if (n < 3) return;
-  // Fläche und Ausrichtung
+  if (n < 3) return null;
   let area2 = 0;
   for (let i = 0, j = n - 1; i < n; j = i++) area2 += (pts[j][0] + pts[i][0]) * (pts[j][1] - pts[i][1]);
   const ccw = area2 < 0; // Formel liefert negatives Vorzeichen für CCW
   const area = Math.abs(area2) / 2;
 
-  // Schatten: verschobener Grundriss plus Seitenflächen
-  const L = Math.min(b.h * 0.5, 45);
-  if (L > 0.5) {
-    const dx = SHADOW_DIR[0] * L;
-    const dy = SHADOW_DIR[1] * L;
-    shadows.addM(
-      pts.map(([x, y]) => [x + dx, y + dy] as [number, number]),
-      0,
-    );
-    for (let i = 0; i < n; i++) {
-      const [ax, ay] = pts[i];
-      const [bx, by] = pts[(i + 1) % n];
-      shadows.tri(ax, ay, bx, by, bx + dx, by + dy, 0);
-      shadows.tri(ax, ay, bx + dx, by + dy, ax + dx, ay + dy, 0);
-    }
-  }
-
-  // Dachfarbe und -form
   const t = b.t;
   const isChurch = t === 'church' || t === 'cathedral' || t === 'chapel';
   let flat = FLATS.has(b.rs ?? '') || (!b.rs && (FLAT_TYPES.has(t) || area > 1400 || b.h > 22));
@@ -478,7 +490,6 @@ function buildRoof(b: Building, roofs: FillBuilder, edges: FillBuilder, shadows:
   const th = Math.atan2(sy, sx) / 2;
   let ax = Math.cos(th);
   let ay = Math.sin(th);
-  // Ausdehnung entlang beider Achsen
   let u0 = Infinity;
   let u1 = -Infinity;
   let v0 = Infinity;
@@ -492,86 +503,116 @@ function buildRoof(b: Building, roofs: FillBuilder, edges: FillBuilder, shadows:
     v1 = Math.max(v1, v);
   }
   if (v1 - v0 > u1 - u0) {
-    // Firstrichtung entlang der längeren Seite
     [ax, ay] = [-ay, ax];
     [u0, u1, v0, v1] = [v0, v1, -u1, -u0];
   }
-  const mcx = cx + ax * (u0 + u1) / 2 + -ay * (v0 + v1) / 2;
-  const mcy = cy + ay * (u0 + u1) / 2 + ax * (v0 + v1) / 2;
+  const mcx = cx + (ax * (u0 + u1)) / 2 + (-ay * (v0 + v1)) / 2;
+  const mcy = cy + (ay * (u0 + u1)) / 2 + (ax * (v0 + v1)) / 2;
   const len = u1 - u0;
   const wid = v1 - v0;
-
-  // Facettendach nur für annähernd rechteckige Grundrisse
   const fill = area / Math.max(1, len * wid);
   const simple = !b.holes?.length && n <= 14 && wid > 2 && fill > 0.82;
-  if (flat) {
+  const hip = HIP.has(b.rs ?? '') || (!b.rs && len / wid < 1.3);
+  const half = hip ? Math.max(0, (len - wid) / 2) : len / 2 + 0.01;
+  return {
+    pts,
+    ccw,
+    area,
+    color,
+    kind: flat ? 'flat' : simple ? 'facet' : 'band',
+    r0: [mcx - ax * half, mcy - ay * half],
+    r1: [mcx + ax * half, mcy + ay * half],
+    half,
+    wid,
+    band: Math.min(4, Math.max(1.5, Math.sqrt(area) * 0.18)),
+  };
+}
+
+/** Nächster Punkt auf dem First */
+export function ridgeProj(r: RoofInfo, x: number, y: number): [number, number] {
+  const dx = r.r1[0] - r.r0[0];
+  const dy = r.r1[1] - r.r0[1];
+  const l2 = dx * dx + dy * dy;
+  const q = l2 > 0 ? Math.max(0, Math.min(1, ((x - r.r0[0]) * dx + (y - r.r0[1]) * dy) / l2)) : 0;
+  return [r.r0[0] + dx * q, r.r0[1] + dy * q];
+}
+
+/** Außennormale (normiert) der Kante i */
+export function edgeNormal(r: RoofInfo, i: number): [number, number] {
+  const [px, py] = r.pts[i];
+  const [qx, qy] = r.pts[(i + 1) % r.pts.length];
+  let nx = qy - py;
+  let ny = -(qx - px);
+  if (!r.ccw) {
+    nx = -nx;
+    ny = -ny;
+  }
+  const l = Math.hypot(nx, ny) || 1;
+  return [nx / l, ny / l];
+}
+
+/** Dach eines Gebäudes von oben: Dachflächen je nach Form unterschiedlich hell, Kante, Schatten */
+function buildRoof(b: Building, roofs: FillBuilder, edges: FillBuilder, shadows: FillBuilder): void {
+  const r = roofInfo(b);
+  if (!r) return;
+  const { pts, color, ccw } = r;
+  const n = pts.length;
+
+  // Schatten: verschobener Grundriss plus Seitenflächen
+  const L = Math.min(b.h * 0.5, 45);
+  if (L > 0.5) {
+    const dx = SHADOW_DIR[0] * L;
+    const dy = SHADOW_DIR[1] * L;
+    shadows.addM(
+      pts.map(([x, y]) => [x + dx, y + dy] as [number, number]),
+      0,
+    );
+    for (let i = 0; i < n; i++) {
+      const [ax, ay] = pts[i];
+      const [bx, by] = pts[(i + 1) % n];
+      shadows.tri(ax, ay, bx, by, bx + dx, by + dy, 0);
+      shadows.tri(ax, ay, bx + dx, by + dy, ax + dx, ay + dy, 0);
+    }
+  }
+
+  if (r.kind === 'flat') {
     roofs.add(b.outer, b.holes, color);
-    // Attika: heller Rand innen
     if (n <= 200) edges.ribbon([...pts, pts[0]], 0.45, shade(color, 1.18), ccw ? 0.3 : -0.3);
-  } else if (!simple) {
-    // verwinkeltes Steildach (z. B. Blockrand): Grundfarbe plus schräge Dachflächen entlang jeder Außenkante
+  } else if (r.kind === 'band') {
     roofs.add(b.outer, b.holes, color);
-    const band = Math.min(4, Math.max(1.5, Math.sqrt(area) * 0.18));
     for (let i = 0; i < n; i++) {
       const [px, py] = pts[i];
       const [qx, qy] = pts[(i + 1) % n];
-      const el = Math.hypot(qx - px, qy - py);
-      if (el < 1) continue;
-      // Innennormale
-      let ix = -(qy - py) / el;
-      let iy = (qx - px) / el;
-      if (!ccw) {
-        ix = -ix;
-        iy = -iy;
-      }
-      const lit = -(ix * TO_SUN[0] + iy * TO_SUN[1]);
+      if (Math.hypot(qx - px, qy - py) < 1) continue;
+      const [nx, ny] = edgeNormal(r, i);
+      const lit = nx * TO_SUN[0] + ny * TO_SUN[1];
       const c = shade(color, 1 + 0.2 * lit);
-      roofs.tri(px, py, qx, qy, qx + ix * band, qy + iy * band, c);
-      roofs.tri(px, py, qx + ix * band, qy + iy * band, px + ix * band, py + iy * band, c);
+      const ix = -nx * r.band;
+      const iy = -ny * r.band;
+      roofs.tri(px, py, qx, qy, qx + ix, qy + iy, c);
+      roofs.tri(px, py, qx + ix, qy + iy, px + ix, py + iy, c);
     }
   } else {
-    // Satteldach: First über die ganze Länge; Walmdach: First um die halbe Breite kürzer
-    const hip = HIP.has(b.rs ?? '') || (!b.rs && len / wid < 1.3);
-    const half = hip ? Math.max(0, (len - wid) / 2) : len / 2 + 0.01;
-    const r0: [number, number] = [mcx - ax * half, mcy - ay * half];
-    const r1: [number, number] = [mcx + ax * half, mcy + ay * half];
-    const proj = (x: number, y: number): [number, number] => {
-      const dx = r1[0] - r0[0];
-      const dy = r1[1] - r0[1];
-      const l2 = dx * dx + dy * dy;
-      const q = l2 > 0 ? Math.max(0, Math.min(1, ((x - r0[0]) * dx + (y - r0[1]) * dy) / l2)) : 0;
-      return [r0[0] + dx * q, r0[1] + dy * q];
-    };
     for (let i = 0; i < n; i++) {
       const [px, py] = pts[i];
       const [qx, qy] = pts[(i + 1) % n];
-      // Außennormale der Kante
-      let nx = qy - py;
-      let ny = -(qx - px);
-      if (!ccw) {
-        nx = -nx;
-        ny = -ny;
-      }
-      const nl = Math.hypot(nx, ny) || 1;
-      const lit = (nx / nl) * TO_SUN[0] + (ny / nl) * TO_SUN[1];
-      const c = shade(color, 1 + 0.2 * lit);
-      const [rpx, rpy] = proj(px, py);
-      const [rqx, rqy] = proj(qx, qy);
+      const [nx, ny] = edgeNormal(r, i);
+      const c = shade(color, 1 + 0.2 * (nx * TO_SUN[0] + ny * TO_SUN[1]));
+      const [rpx, rpy] = ridgeProj(r, px, py);
+      const [rqx, rqy] = ridgeProj(r, qx, qy);
       roofs.tri(px, py, qx, qy, rqx, rqy, c);
       roofs.tri(px, py, rqx, rqy, rpx, rpy, c);
     }
-    // Firstlinie
-    if (half > 0.5)
+    if (r.half > 0.5)
       edges.ribbon(
         [
-          [r0[0], r0[1]],
-          [r1[0], r1[1]],
+          [r.r0[0], r.r0[1]],
+          [r.r1[0], r.r1[1]],
         ],
         0.18,
         shade(color, 0.75),
       );
   }
-  // Kontur
   edges.ribbon([...pts, pts[0]], 0.14, b.h > 30 ? BUILDING_EDGE_DARK : shade(color, 0.55));
 }
 

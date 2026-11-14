@@ -38,6 +38,14 @@ export class WorldView {
   readonly scene = new THREE.Scene();
   readonly camera = new THREE.OrthographicCamera(-1, 1, 1, -1, -100, 100);
   readonly miniCamera = new THREE.OrthographicCamera(-1, 1, 1, -1, -100, 100);
+  /** Verfolgerkamera für die 3D-Ansicht */
+  readonly cam3d = new THREE.PerspectiveCamera(50, 1, 0.5, 2000);
+  use3d = false;
+  cam3dPos = new THREE.Vector3();
+  cam3dTarget = new THREE.Vector3();
+  /** Radius des Sichtbereichs in 3D (m) */
+  radius3d = 200;
+  private v3 = new THREE.Vector3();
   /** Kameramitte (m), Maßstab (m pro CSS-Pixel), Drehung: Weltrichtung von "oben" am Bildschirm (rad, PI/2 = Norden) */
   cx = 0;
   cy = 0;
@@ -91,14 +99,29 @@ export class WorldView {
     this.highlight.renderOrder = 50;
     this.renderer.autoClear = false;
     this.camera.layers.enable(RL_MAIN);
+    this.cam3d.layers.enable(RL_MAIN);
+    this.cam3d.up.set(0, 0, 1);
     this.miniCamera.layers.set(0);
     this.miniCamera.layers.enable(RL_MINI);
+    // Licht für die 3D-Fahrzeuge (Lambert); alles andere ist vorberechnet beleuchtet
+    const hemi = new THREE.HemisphereLight(0xffffff, 0x8a8a80, 2.2);
+    hemi.position.set(0, 0, 1);
+    const sun = new THREE.DirectionalLight(0xfff4e0, 2.2);
+    sun.position.set(-60, -60, 90);
+    this.scene.add(hemi, sun);
   }
 
-  /** Welt -> Bildschirmpixel (CSS) */
-  toScreen(x: number, y: number): [number, number] {
+  /** Welt -> Bildschirmpixel (CSS); hinter der Kamera: weit außerhalb */
+  toScreen(x: number, y: number, z = 0): [number, number] {
     const w = this.canvas.clientWidth;
     const h = this.canvas.clientHeight;
+    if (this.use3d && this.mode === 'drive') {
+      const v = this.v3.set(x, y, z);
+      v.applyMatrix4(this.cam3d.matrixWorldInverse);
+      if (v.z > -0.5) return [-1e5, -1e5];
+      v.applyMatrix4(this.cam3d.projectionMatrix);
+      return [((v.x + 1) / 2) * w, ((1 - v.y) / 2) * h];
+    }
     const dx = x - this.cx;
     const dy = y - this.cy;
     const ux = Math.cos(this.rot);
@@ -118,14 +141,22 @@ export class WorldView {
     cam.right = (rw / 2) * mpp;
     cam.top = (rh / 2) * mpp;
     cam.bottom = (-rh / 2) * mpp;
-    cam.position.set(cx, cy, 50);
+    cam.position.set(cx, cy, 300);
+    cam.near = -100;
+    cam.far = 1000;
     cam.up.set(Math.cos(rot), Math.sin(rot), 0);
     cam.lookAt(cx, cy, 0);
     cam.updateProjectionMatrix();
     const vis: boolean[] = [];
+    const dims: Array<'2d' | '3d'> = [];
     for (const v of this.views.values()) {
       vis.push(v.group.visible);
+      dims.push(v.dim);
       v.group.visible = true;
+      if (v.dim !== '2d') {
+        v.dim = '2d';
+        this.applyLayers(v);
+      }
     }
     const ovVis = this.overview.visible;
     this.overview.visible = true;
@@ -141,7 +172,13 @@ export class WorldView {
     r.setScissorTest(false);
     r.setViewport(0, 0, this.canvas.clientWidth, this.canvas.clientHeight);
     let i = 0;
-    for (const v of this.views.values()) v.group.visible = vis[i++];
+    for (const v of this.views.values()) {
+      if (v.dim !== dims[i]) {
+        v.dim = dims[i];
+        this.applyLayers(v);
+      }
+      v.group.visible = vis[i++];
+    }
     this.overview.visible = ovVis;
   }
 
@@ -281,21 +318,29 @@ export class WorldView {
     const showTiles = this.mpp < TILE_MPP;
     this.overview.visible = !showTiles;
     for (const v of this.views.values()) v.group.visible = false;
+    const visible = new Set<string>();
     const want = new Set<string>();
+    const in3d = this.use3d && this.mode === 'drive';
     if (showTiles) {
-      // Kreis um die Bildmitte, der den gedrehten Bildschirm ganz abdeckt
-      const r = (Math.hypot(this.canvas.clientWidth, this.canvas.clientHeight) / 2) * this.mpp + TILE_SIZE * 0.5;
-      this.collect(this.cx, this.cy, r, want);
+      // Kreis um die Bildmitte, der den gedrehten Bildschirm ganz abdeckt (3D: Sichtbereich vor dem Auto)
+      const r = in3d ? this.radius3d : (Math.hypot(this.canvas.clientWidth, this.canvas.clientHeight) / 2) * this.mpp + TILE_SIZE * 0.5;
+      this.collect(this.cx, this.cy, r, visible);
     }
+    for (const k of visible) want.add(k);
+    // Umgebung des Autos vorladen (Verkehr, Kollision), aber nicht zeichnen
     if (this.anchor) this.collect(this.anchor[0], this.anchor[1], this.anchorRadius, want);
-    // nächstgelegene zuerst laden
     const order = [...want].sort((a, b) => this.tileDist(a) - this.tileDist(b));
+    const dim = in3d ? '3d' : '2d';
     for (const k of order) {
       this.lastUsed.set(k, this.frame);
       const v = this.views.get(k);
       if (v) {
-        v.group.visible = showTiles;
-        this.applyLayers(v);
+        if (visible.has(k)) {
+          v.group.visible = true;
+          if (in3d) v.ensure3D();
+          v.dim = dim;
+          this.applyLayers(v);
+        }
       } else if (!this.loading.has(k) && this.loading.size < 6) void this.load(k);
     }
     if (this.views.size > MAX_TILES) {
@@ -370,16 +415,26 @@ export class WorldView {
     this.camera.right = hw;
     this.camera.top = hh;
     this.camera.bottom = -hh;
-    this.camera.position.set(this.cx, this.cy, 50);
+    this.camera.position.set(this.cx, this.cy, 300);
     this.camera.up.set(Math.cos(this.rot), Math.sin(this.rot), 0);
     this.camera.lookAt(this.cx, this.cy, 0);
+    this.camera.near = -100;
+    this.camera.far = 1000;
     this.camera.updateProjectionMatrix();
+    const in3d = this.use3d && this.mode === 'drive';
+    if (in3d) {
+      this.cam3d.aspect = w / Math.max(1, h);
+      this.cam3d.position.copy(this.cam3dPos);
+      this.cam3d.lookAt(this.cam3dTarget);
+      this.cam3d.updateProjectionMatrix();
+      this.cam3d.updateMatrixWorld();
+    }
     this.updateTiles();
     if (this.frame % 6 === 0) this.updateSignals();
     shared.uMpp.value = this.mpp;
     shared.uTime.value = this.time;
     this.renderer.clear();
-    this.renderer.render(this.scene, this.camera);
+    this.renderer.render(this.scene, in3d ? this.cam3d : this.camera);
   }
 
   private updateSignals(): void {

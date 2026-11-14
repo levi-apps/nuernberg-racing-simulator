@@ -15,6 +15,7 @@ export enum Pat {
   Gravel = 6,
   Roof = 7,
   Canopy = 8,
+  Facade = 9,
 }
 
 /** gemeinsame Uniforms: Maßstab (m/px) und Zeit */
@@ -26,8 +27,10 @@ export const shared = {
 const vert = /* glsl */ `
 varying vec2 vW;
 varying vec3 vC;
+varying vec2 vUv;
 void main() {
   vC = color;
+  vUv = uv;
   vec4 wp = modelMatrix * vec4(position, 1.0);
   vW = wp.xy;
   gl_Position = projectionMatrix * viewMatrix * wp;
@@ -41,6 +44,7 @@ uniform float uMpp;
 uniform float uTime;
 varying vec2 vW;
 varying vec3 vC;
+varying vec2 vUv;
 
 // Hash ohne Sinus, Gitter periodisch (4096 Zellen) gegen Genauigkeitsprobleme bei großen Koordinaten
 float h21(vec2 p) {
@@ -114,6 +118,15 @@ void main() {
   } else if (uPat == 7) {
     // Dach: leichte Unregelmäßigkeit
     c *= 0.95 + 0.08 * vnoise(w * 2.2) + 0.04 * vnoise(w * 9.0) * detail(0.12);
+  } else if (uPat == 9) {
+    // Fassade: Fensterreihen je Geschoss (3,1 m), Fensterachsen alle 2,8 m
+    vec2 g = vec2(vUv.x / 2.8, vUv.y / 3.1);
+    vec2 f = fract(g);
+    float win = step(0.27, f.x) * step(f.x, 0.73) * step(0.3, f.y) * step(f.y, 0.8);
+    float lit = h21(floor(g) + 13.0);
+    vec3 wc = mix(vec3(0.13, 0.16, 0.2), vec3(0.34, 0.39, 0.45), lit * lit);
+    c = mix(c, wc, win * detail(0.5));
+    c *= 0.93 + 0.08 * vnoise(vW * 0.6 + vUv.y * 0.3);
   } else if (uPat == 8) {
     // Baumkrone: blättrige Struktur
     c *= 0.82 + 0.32 * fbm(w * 1.4) + 0.1 * vnoise(w * 6.0) * detail(0.15);
@@ -124,17 +137,19 @@ void main() {
 
 const cache = new Map<string, THREE.ShaderMaterial>();
 
-export function surfaceMat(pat: Pat, alpha = 1): THREE.ShaderMaterial {
-  const key = `${pat}:${alpha}`;
+/** depth = true: mit Tiefentest (für 3D-Körper wie Gebäude und Bäume) */
+export function surfaceMat(pat: Pat, alpha = 1, depth = false): THREE.ShaderMaterial {
+  const key = `${pat}:${alpha}:${depth}`;
   let m = cache.get(key);
   if (!m) {
     m = new THREE.ShaderMaterial({
       vertexShader: vert,
       fragmentShader: frag,
       vertexColors: true,
+      // alles im transparenten Durchgang, damit renderOrder gilt (Boden zuerst, dann Körper mit Tiefentest)
       transparent: true,
-      depthTest: false,
-      depthWrite: false,
+      depthTest: depth,
+      depthWrite: depth,
       side: THREE.DoubleSide,
       uniforms: { uPat: { value: pat }, uAlpha: { value: alpha }, uMpp: shared.uMpp, uTime: shared.uTime },
     });
@@ -144,17 +159,21 @@ export function surfaceMat(pat: Pat, alpha = 1): THREE.ShaderMaterial {
 }
 
 /**
- * Schatten: jedes Pixel nur einmal abdunkeln, auch wenn sich Schatten überlappen
- * (Tiefentest auf gleicher Höhe: der erste Schatten schreibt, weitere scheitern).
+ * Schatten: jedes Pixel nur einmal abdunkeln, auch wenn sich Schatten überlappen.
+ * Über den Stencil-Puffer: der erste Schatten markiert das Pixel, weitere werden verworfen
+ * (funktioniert in Draufsicht und Perspektive gleich).
  */
 export const SHADOW_MAT = new THREE.MeshBasicMaterial({
   color: 0x1a2030,
   transparent: true,
   opacity: 0.26,
-  depthTest: true,
-  depthWrite: true,
-  depthFunc: THREE.LessDepth,
+  depthTest: false,
+  depthWrite: false,
   side: THREE.DoubleSide,
+  stencilWrite: true,
+  stencilRef: 1,
+  stencilFunc: THREE.NotEqualStencilFunc,
+  stencilZPass: THREE.ReplaceStencilOp,
 });
 
 /** Lichtrichtung (zur Sonne hin): Sonne im Südwesten, Schatten fallen nach Nordosten */

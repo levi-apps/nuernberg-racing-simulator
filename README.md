@@ -26,7 +26,8 @@ npm run dev             # Spiel unter http://localhost:5173
 | A, D / ←, → | lenken |
 | Leertaste | Handbremse (driften) |
 | R | zurück auf die nächste Straße |
-| C | Kamera: Norden oben ↔ dreht mit dem Auto |
+| V | 3D-Ansicht (Verfolgerkamera) ↔ Draufsicht |
+| C | Kamera: Norden oben ↔ dreht mit dem Auto (Draufsicht) |
 | 1 / 2 | Taxi- bzw. Kurierdienst beginnen |
 | X | Dienst beenden bzw. Navigation beenden |
 | O | Startgebiet (Stadtteil) wählen |
@@ -58,6 +59,17 @@ Die Welt wird als realistische Draufsicht gezeichnet. Alle Texturen sind prozedu
 - **Gebäude:** Dächer in Ziegelrot, Schiefergrau oder Kupfergrün, aus `roof:colour` oder je nach Gebäudeart. Satteldächer bekommen einen First, Walmdächer Dachflächen, verwinkelte Steildächer schräge Ränder. Flachdächer haben eine helle Attika. Schatten richten sich nach der Gebäudehöhe (Sonne aus Südwesten).
 - **Bäume:** Einzelbäume und Baumreihen aus OSM mit Kronen und Schatten. Wälder, Rasen und Wasser haben eigene Muster, das Wasser bewegt sich langsam.
 - **Ampeln:** Mast am Fahrbahnrand, bei breiten Zufahrten mit Ausleger über die Spuren, leuchtende Lampe mit Schein auf der Fahrbahn.
+
+### 3D-Ansicht (Taste V, Versuch)
+
+Die Kamera folgt dem Auto schräg von hinten oben. Bei höherem Tempo steigt sie höher und schaut weiter voraus. Die Auswahl bleibt im Browser gespeichert. In 3D bekommen die Kacheln eigene Körper, die erst beim ersten Wechsel erzeugt werden:
+
+- **Gebäude:** Wände in OSM-Höhe mit Fensterreihen (Putz-, Sandstein- und Betontöne). Die Dächer sitzen auf echter Höhe, Sattel- und Walmdächer mit First.
+- **Bäume:** Stamm und Krone.
+- **Ampeln:** auf Masten, bei breiten Zufahrten mit Ausleger, und mit leuchtender Lampe.
+- **Fahrzeuge:** Körper aus Unterbau, Kabine und Dach, mit Bremslichtern. KI-Autos hinter Gebäuden sind verdeckt.
+
+Straßen, Markierungen und Schatten bleiben flach auf dem Boden. Straßennamen erscheinen in 3D nur im Umkreis von etwa 110 m. Die Minikarte zeigt weiter die Draufsicht und dreht sich mit der Kamera.
 
 ## Aufträge und Navigation
 

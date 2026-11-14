@@ -320,3 +320,55 @@ export function slicePts(pts: Array<[number, number]>, cum: number[], s0: number
   }
   return out;
 }
+
+/** Dreiecksnetz mit Höhe, Farben und Wandkoordinaten (für die 3D-Ansicht) */
+export class Mesh3DBuilder {
+  private pos: number[] = [];
+  private col: number[] = [];
+  private uv: number[] = [];
+  private idx: number[] = [];
+
+  vert(x: number, y: number, z: number, color: number, u = 0, v = 0): number {
+    tmp.setHex(color);
+    this.pos.push(x, y, z);
+    this.col.push(tmp.r, tmp.g, tmp.b);
+    this.uv.push(u, v);
+    return this.pos.length / 3 - 1;
+  }
+
+  tri(a: number, b: number, c: number): void {
+    this.idx.push(a, b, c);
+  }
+
+  quad(a: number, b: number, c: number, d: number): void {
+    this.idx.push(a, b, c, a, c, d);
+  }
+
+  /** Polygon (Meter) waagerecht auf Höhe z */
+  polygon(ring: Array<[number, number]>, holes: Array<Array<[number, number]>>, z: number, color: number): void {
+    const coords: number[] = [];
+    const hi: number[] = [];
+    for (const [x, y] of ring) coords.push(x, y);
+    for (const h of holes) {
+      hi.push(coords.length / 2);
+      for (const [x, y] of h) coords.push(x, y);
+    }
+    const tris = earcut(coords, hi.length ? hi : undefined, 2);
+    const base = this.pos.length / 3;
+    for (let i = 0; i < coords.length; i += 2) this.vert(coords[i], coords[i + 1], z, color);
+    for (const t of tris) this.idx.push(base + t);
+  }
+
+  get empty(): boolean {
+    return this.idx.length === 0;
+  }
+
+  build(): THREE.BufferGeometry {
+    const g = new THREE.BufferGeometry();
+    g.setAttribute('position', new THREE.Float32BufferAttribute(this.pos, 3));
+    g.setAttribute('color', new THREE.Float32BufferAttribute(this.col, 3));
+    g.setAttribute('uv', new THREE.Float32BufferAttribute(this.uv, 2));
+    g.setIndex(this.pos.length / 3 > 65535 ? new THREE.Uint32BufferAttribute(this.idx, 1) : new THREE.Uint16BufferAttribute(this.idx, 1));
+    return g;
+  }
+}
