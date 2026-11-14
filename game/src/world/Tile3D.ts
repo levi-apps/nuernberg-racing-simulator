@@ -7,7 +7,9 @@ import * as THREE from 'three';
 import { TILE_SIZE, type Building, type RoadClass, type Tile } from '@nrs/shared';
 import { MarkerBuilder, Mesh3DBuilder } from './geometry.ts';
 import { Pat } from './materials.ts';
-import { litSurface, PAT_LAMP, PAT_ROOF_FLAT } from './litMaterials.ts';
+import { litSurface, PAT_LAMP, PAT_ROOF_FLAT, PAT_SOLAR } from './litMaterials.ts';
+import { beam, box, cylinder, spire } from './shapes.ts';
+import { buildLandmark, buildReplacement, inAltstadt, landmarkInfo, pointLandmarks, SANDSTONE, STYLE_FACHWERK, STYLE_SAND, STYLE_TOWER, type Builders } from './Landmarks.ts';
 import { edgeNormal, hash, pick, ridgeProj, roofInfo, type SignalSlot } from './TileView.ts';
 import { TREE_GREENS } from './style.ts';
 import { AD, adMaterial, type AdRegion } from './Ads.ts';
@@ -32,8 +34,13 @@ export function buildTile3D(t: Tile): Tile3D {
   const flatRoofs = new Mesh3DBuilder();
   const solid = new Mesh3DBuilder();
   const ads = new Mesh3DBuilder();
+  const solar = new Mesh3DBuilder();
   adMaterial(); // Texturkarte und Bereiche anlegen
-  for (const b of t.buildings) building(b, walls, roofs, flatRoofs, solid, ads);
+  const D: Detail = { walls, roofs, flatRoofs, solid, ads, solar };
+  for (const b of t.buildings) building(b, D);
+  pointLandmarks(t, D);
+  // Stadtmauer: Mauer mit überdachtem Wehrgang entlang der OSM-Linien
+  for (const l of t.lines) if (l.k === 'citywall' && l.layer === 0) cityWall(l.pts, D);
 
   // Bäume: Stamm und Krone aus mehreren Ballen
   const trunks = new Mesh3DBuilder();
@@ -161,6 +168,7 @@ export function buildTile3D(t: Tile): Tile3D {
   add(poles, litSurface(Pat.Plain, 1, true), 12, 'signals');
   add(lampHeads, litSurface(PAT_LAMP, 1, true), 12.05, 'signals', false);
   add(ads, adMaterial(), 12.2, 'buildings');
+  add(solar, litSurface(PAT_SOLAR, 1, true), 10.25, 'buildings', false);
   let lampAttr: THREE.BufferAttribute | null = null;
   if (!lamps.empty) {
     const g = lamps.build();
@@ -202,18 +210,43 @@ function streetLamp(poles: Mesh3DBuilder, heads: Mesh3DBuilder, x: number, y: nu
   box(heads, hx, hy, H - 0.28, H - 0.06, 0.75, 0.3, Math.atan2(dy, dx), 0xf4ecd8);
 }
 
-function building(b: Building, walls: Mesh3DBuilder, roofs: Mesh3DBuilder, flatRoofs: Mesh3DBuilder, solid: Mesh3DBuilder, ads: Mesh3DBuilder): void {
+interface Detail extends Builders {
+  ads: Mesh3DBuilder;
+  solar: Mesh3DBuilder;
+}
+
+const PLASTER_FW = [0xefe6d2, 0xf3ead6, 0xe8dcc4, 0xf1e4cb];
+
+function building(b: Building, D: Detail): void {
+  const { walls, roofs, flatRoofs, solid, ads, solar } = D;
   const r = roofInfo(b);
   if (!r) return;
-  const { pts, color } = r;
+  const { pts } = r;
   const n = pts.length;
+  const [bcx, bcy] = centroid(pts);
+  const lmi = landmarkInfo(b, bcx, bcy);
+  if (lmi?.replace) {
+    buildReplacement(b, r, D);
+    return;
+  }
+  const color = lmi?.roofColor ?? r.color;
   const z0 = b.minH ?? 0;
   const top = Math.max(z0 + 2.5, r.kind === 'flat' ? b.h : b.h - Math.min(r.wid * 0.35, 5));
   const industrial = INDUSTRIAL.has(b.t);
-  const fac = b.t === 'church' || b.t === 'cathedral' ? 0xc9b08a : industrial ? pick(FACADE_IND, b.id) : pick(FACADE, b.id);
+  const alt = inAltstadt(bcx, bcy);
+  let fac = b.t === 'church' || b.t === 'cathedral' ? 0xc9b08a : industrial ? pick(FACADE_IND, b.id) : pick(FACADE, b.id);
   // Fassadenstil (Fensterraster, Ladenzone) je Gebäude; niedrige Nebengebäude ohne Laden
   let style = Math.floor(hash(b.id * 13 + 5) * 30);
   if (industrial || top - z0 < 6) style = style - (style % 5) + (style % 5 === 2 ? 1 : style % 5);
+  if (lmi?.style !== undefined) style = lmi.style;
+  else if (alt && !industrial) {
+    // Altstadt: Sandstein oder Fachwerk
+    const roll = hash(b.id * 5 + 1);
+    if (roll < 0.45) style = STYLE_SAND + (b.id % 4);
+    else if (roll < 0.75 && top - z0 <= 16) style = STYLE_FACHWERK + (b.id % 4);
+  }
+  if (style >= STYLE_SAND) fac = SANDSTONE[b.id % 4];
+  else if (style >= STYLE_FACHWERK) fac = PLASTER_FW[b.id % 4];
   const rings = [
     pts,
     ...(b.holes ?? []).map((h) => {
@@ -239,6 +272,60 @@ function building(b: Building, walls: Mesh3DBuilder, roofs: Mesh3DBuilder, flatR
       else walls.quad(a, d, c, bb);
       u += el;
     }
+  }
+  buildLandmark(b, r, top, D);
+  const longest = (): number => {
+    let bi = 0;
+    let bl = 0;
+    for (let i = 0; i < n; i++) {
+      const l = Math.hypot(pts[(i + 1) % n][0] - pts[i][0], pts[(i + 1) % n][1] - pts[i][1]);
+      if (l > bl) {
+        bl = l;
+        bi = i;
+      }
+    }
+    return bi;
+  };
+  // Chörlein (Erker) an Altstadthäusern
+  if (alt && !lmi && top - z0 >= 9 && hash(b.id + 41) < 0.3) {
+    const i = longest();
+    const [px, py] = pts[i];
+    const [qx, qy] = pts[(i + 1) % n];
+    const el = Math.hypot(qx - px, qy - py);
+    if (el >= 6) {
+      const [nx, ny] = edgeNormal(r, i);
+      const f = 0.3 + hash(b.id + 42) * 0.4;
+      const ex = px + (qx - px) * f + nx * 0.45;
+      const ey = py + (qy - py) * f + ny * 0.45;
+      const ang = Math.atan2(ny, nx);
+      const ez = z0 + 4.2;
+      box(solid, ex, ey, ez, ez + 3.2, 0.9, 2.0, ang, shadeHex(fac, 0.92));
+      for (const k of [-0.6, 0, 0.6]) box(solid, ex + nx * 0.46 - ny * k, ey + ny * 0.46 + nx * k, ez + 0.9, ez + 2.4, 0.02, 0.45, ang, 0x1e2732);
+      box(solid, ex, ey, ez - 0.35, ez, 0.7, 1.6, ang, shadeHex(fac, 0.8));
+      spire(roofs, ex, ey, 1.25, ez + 3.2, ez + 4.4, color, 4, ang + Math.PI / 4);
+    }
+  }
+  // Balkone an Wohnblöcken außerhalb der Altstadt
+  if (!alt && !lmi && (b.t === 'apartments' || b.t === 'residential') && top - z0 >= 12 && hash(b.id + 51) < 0.35) {
+    const i = longest();
+    const [px, py] = pts[i];
+    const [qx, qy] = pts[(i + 1) % n];
+    const el = Math.hypot(qx - px, qy - py);
+    const [nx, ny] = edgeNormal(r, i);
+    const ang = Math.atan2(ny, nx);
+    const bays = Math.floor(el / 3.4);
+    const floors = Math.floor((top - z0) / 3);
+    const glassy = hash(b.id + 52) < 0.5;
+    if (bays >= 3)
+      for (let fl = 1; fl < floors; fl++)
+        for (let k = 1; k < bays - 1; k++) {
+          const f = (k + 0.5) / bays;
+          const bx = px + (qx - px) * f;
+          const by = py + (qy - py) * f;
+          const z = z0 + fl * 3;
+          box(solid, bx + nx * 0.65, by + ny * 0.65, z, z + 0.18, 1.3, 2.6, ang, 0xd9d6cf);
+          box(solid, bx + nx * 1.27, by + ny * 1.27, z + 0.18, z + 1.1, 0.06, 2.6, ang, glassy ? 0x7a8c98 : 0x5a5d62);
+        }
   }
   // Werbebanner an der Fassade (viele!)
   if (top - z0 >= 6.5 && b.t !== 'church' && b.t !== 'cathedral') {
@@ -306,7 +393,7 @@ function building(b: Building, walls: Mesh3DBuilder, roofs: Mesh3DBuilder, flatR
     return;
   }
   if (r.kind === 'band') {
-    const rise = r.band * 0.7;
+    const rise = r.band * (lmi?.roofScale ? 1.8 : 0.7);
     flatRoofs.polygon(pts, rings.slice(1), top + rise, color);
     for (let i = 0; i < n; i++) {
       const [px, py] = pts[i];
@@ -326,7 +413,7 @@ function building(b: Building, walls: Mesh3DBuilder, roofs: Mesh3DBuilder, flatR
     return;
   }
   // Satteldach / Walmdach: Facetten zum First, Ziegel-UVs entlang Traufe und Neigung
-  const rh = Math.min(r.wid * 0.45, 7);
+  const rh = lmi?.roofScale ? Math.min(r.wid * lmi.roofScale, 24) : Math.min(r.wid * 0.45, 7);
   for (let i = 0; i < n; i++) {
     const [px, py] = pts[i];
     const [qx, qy] = pts[(i + 1) % n];
@@ -344,6 +431,70 @@ function building(b: Building, walls: Mesh3DBuilder, roofs: Mesh3DBuilder, flatR
     const cc = roofs.vert(rqx, rqy, top + rh, color, along(rqx, rqy), sl);
     const d = roofs.vert(rpx, rpy, top + rh, color, along(rpx, rpy), sl);
     roofs.quad(a, bb, cc, d);
+  }
+  // Gauben, Solarmodule, Antennen
+  if (!lmi && rh >= 2.4)
+    for (let i = 0; i < n; i++) {
+      const [px, py] = pts[i];
+      const [qx, qy] = pts[(i + 1) % n];
+      const el = Math.hypot(qx - px, qy - py);
+      if (el < 5) continue;
+      const [nx, ny] = edgeNormal(r, i);
+      const rp = ridgeProj(r, px, py);
+      const rq = ridgeProj(r, qx, qy);
+      // Walmflächen (Dreiecke) auslassen
+      if (Math.hypot(rq[0] - rp[0], rq[1] - rp[1]) < el * 0.45) continue;
+      const hv = hash(b.id * 31 + i);
+      const pt = (t: number, sUp: number): [number, number, number] => {
+        const ex = px + (qx - px) * t;
+        const ey = py + (qy - py) * t;
+        const [rx, ry] = ridgeProj(r, ex, ey);
+        return [ex + (rx - ex) * sUp, ey + (ry - ey) * sUp, top + rh * sUp];
+      };
+      if (!alt && ny < -0.45 && hv < 0.32) {
+        // Solar auf der Südseite
+        const off = 0.1;
+        const run = Math.hypot(rp[0] - px, rp[1] - py);
+        const sl = Math.hypot(run, rh);
+        const c00 = pt(0.12, 0.18);
+        const c10 = pt(0.88, 0.18);
+        const c11 = pt(0.88, 0.78);
+        const c01 = pt(0.12, 0.78);
+        const lift = (q: [number, number, number]): [number, number, number] => [q[0] + nx * off * 0.3, q[1] + ny * off * 0.3, q[2] + off];
+        const [a0, a1, a2, a3] = [lift(c00), lift(c10), lift(c11), lift(c01)];
+        solar.quad(solar.vert(...a0, 0x203050, 0, 0), solar.vert(...a1, 0x203050, el * 0.76, 0), solar.vert(...a2, 0x203050, el * 0.76, sl * 0.6), solar.vert(...a3, 0x203050, 0, sl * 0.6));
+        continue;
+      }
+      if (hv > 0.62) continue;
+      const count = Math.min(3, Math.floor(el / 5));
+      for (let k = 0; k < count; k++) {
+        const [dx, dy, dz] = pt((k + 0.5) / count, 0.28);
+        const [rx2, ry2] = ridgeProj(r, dx, dy);
+        const depth = Math.max(1, Math.hypot(rx2 - dx, ry2 - dy) * 0.55);
+        const ang = Math.atan2(ny, nx);
+        const w = 1.5;
+        // Gaubenkörper (reicht ins Dach hinein), Fenster, Satteldach
+        box(solid, dx - nx * depth * 0.5, dy - ny * depth * 0.5, dz - 0.4, dz + 1.4, depth, w, ang, shadeHex(fac, 0.97));
+        box(solid, dx + nx * 0.02, dy + ny * 0.02, dz + 0.15, dz + 1.15, 0.02, 0.9, ang, 0x1e2732);
+        const lx = -ny * w * 0.58;
+        const ly = nx * w * 0.58;
+        const bxx = dx - nx * depth;
+        const byy = dy - ny * depth;
+        const zt = dz + 1.4;
+        const za = dz + 2.0;
+        roofs.quad(roofs.vert(dx + lx, dy + ly, zt, color, 0, 0), roofs.vert(bxx + lx, byy + ly, zt, color, depth, 0), roofs.vert(bxx, byy, za, color, depth, 1), roofs.vert(dx, dy, za, color, 0, 1));
+        roofs.quad(roofs.vert(dx, dy, za, color, 0, 1), roofs.vert(bxx, byy, za, color, depth, 1), roofs.vert(bxx - lx, byy - ly, zt, color, depth, 0), roofs.vert(dx - lx, dy - ly, zt, color, 0, 0));
+        solid.tri(solid.vert(dx + lx, dy + ly, zt, fac), solid.vert(dx - lx, dy - ly, zt, fac), solid.vert(dx, dy, za, fac));
+      }
+    }
+  // Antennen auf manchen Dächern außerhalb der Altstadt
+  if (!alt && !lmi && hash(b.id + 61) < 0.2) {
+    const ax = (r.r0[0] + r.r1[0]) / 2;
+    const ay = (r.r0[1] + r.r1[1]) / 2;
+    const z = top + rh;
+    cylinder(solid, ax, ay, 0.04, z, z + 2.6, 0x8a8d90, 5, 1);
+    beam(solid, ax - 0.7, ay, ax + 0.7, ay, z + 2.2, 0.025, 0x8a8d90);
+    beam(solid, ax, ay - 0.5, ax, ay + 0.5, z + 1.7, 0.025, 0x8a8d90);
   }
   // Schornsteine nahe am First
   if (r.wid > 6 && hash(b.id + 21) < 0.8) {
@@ -368,18 +519,6 @@ function centroid(pts: Array<[number, number]>): [number, number] {
   return [x / pts.length, y / pts.length];
 }
 
-function cylinder(m: Mesh3DBuilder, x: number, y: number, r: number, z0: number, z1: number, color: number, seg: number): void {
-  const base = [];
-  for (let i = 0; i <= seg; i++) {
-    const a = (i / seg) * Math.PI * 2;
-    base.push([m.vert(x + Math.cos(a) * r, y + Math.sin(a) * r, z0, color), m.vert(x + Math.cos(a) * r * 0.85, y + Math.sin(a) * r * 0.85, z1, color)]);
-  }
-  for (let i = 0; i < seg; i++) {
-    const [a, b] = base[i];
-    const [c, d] = base[i + 1];
-    m.quad(a, c, d, b);
-  }
-}
 
 /** Kronenballen: verbeulte Kugel (glatte Normalen über gemeinsame Ecken) */
 function blob(m: Mesh3DBuilder, x: number, y: number, z: number, r: number, rz: number, color: number, seed: number): void {
@@ -411,28 +550,7 @@ function blob(m: Mesh3DBuilder, x: number, y: number, z: number, r: number, rz: 
     }
 }
 
-/** Quader (Grundfläche w x d, gedreht um a) */
-function box(m: Mesh3DBuilder, x: number, y: number, z0: number, z1: number, w: number, d: number, a: number, color: number): void {
-  const c = Math.cos(a);
-  const s = Math.sin(a);
-  const corner = (u: number, v: number): [number, number] => [x + c * u - s * v, y + s * u + c * v];
-  const pts = [corner(-w / 2, -d / 2), corner(w / 2, -d / 2), corner(w / 2, d / 2), corner(-w / 2, d / 2)];
-  for (let i = 0; i < 4; i++) {
-    const [px, py] = pts[i];
-    const [qx, qy] = pts[(i + 1) % 4];
-    m.quad(m.vert(px, py, z0, color), m.vert(qx, qy, z0, color), m.vert(qx, qy, z1, color), m.vert(px, py, z1, color));
-  }
-  m.quad(m.vert(...pts[0], z1, color), m.vert(...pts[1], z1, color), m.vert(...pts[2], z1, color), m.vert(...pts[3], z1, color));
-}
 
-/** waagerechter Ausleger zwischen zwei Punkten */
-function beam(m: Mesh3DBuilder, ax: number, ay: number, bx: number, by: number, z: number, t: number, color: number): void {
-  const l = Math.hypot(bx - ax, by - ay) || 1;
-  const nx = (-(by - ay) / l) * t;
-  const ny = ((bx - ax) / l) * t;
-  m.quad(m.vert(ax + nx, ay + ny, z, color), m.vert(bx + nx, by + ny, z, color), m.vert(bx - nx, by - ny, z, color), m.vert(ax - nx, ay - ny, z, color));
-  m.quad(m.vert(ax + nx, ay + ny, z - t * 2, color), m.vert(bx + nx, by + ny, z - t * 2, color), m.vert(bx + nx, by + ny, z, color), m.vert(ax + nx, ay + ny, z, color));
-}
 
 /** Werbetafel: Vorderseite zeigt in Richtung (nx, ny), Mitte unten bei (cx, cy, z) */
 function adPanel(m: Mesh3DBuilder, cx: number, cy: number, z: number, nx: number, ny: number, w: number, h: number, r: AdRegion): void {
@@ -521,4 +639,42 @@ function insideBuilding(t: Tile, x: number, y: number, pad: number): boolean {
     if (inRing(o, X, Y) || inRing(o, X + P, Y) || inRing(o, X - P, Y) || inRing(o, X, Y + P) || inRing(o, X, Y - P)) return true;
   }
   return false;
+}
+
+/** Stadtmauer: Quadermauer (7,5 m) mit überdachtem Wehrgang */
+function cityWall(ptsDm: number[], D: Detail): void {
+  const H = 7.5;
+  const T = 0.9;
+  let u = 0;
+  for (let i = 2; i < ptsDm.length; i += 2) {
+    const ax = ptsDm[i - 2] / 10;
+    const ay = ptsDm[i - 1] / 10;
+    const bx = ptsDm[i] / 10;
+    const by = ptsDm[i + 1] / 10;
+    const l = Math.hypot(bx - ax, by - ay);
+    if (l < 0.2) continue;
+    const nx = (-(by - ay) / l) * T;
+    const ny = ((bx - ax) / l) * T;
+    const c = SANDSTONE[2];
+    const su = STYLE_TOWER * 1000 + (u % 900);
+    for (const sgn of [1, -1]) {
+      const w = D.walls;
+      w.quad(w.vert(ax + nx * sgn, ay + ny * sgn, 0, c, su, 0), w.vert(bx + nx * sgn, by + ny * sgn, 0, c, su + l, 0), w.vert(bx + nx * sgn, by + ny * sgn, H, c, su + l, H), w.vert(ax + nx * sgn, ay + ny * sgn, H, c, su, H));
+    }
+    const s = D.solid;
+    s.quad(s.vert(ax + nx, ay + ny, H, c), s.vert(bx + nx, by + ny, H, c), s.vert(bx - nx, by - ny, H, c), s.vert(ax - nx, ay - ny, H, c));
+    // Wehrgang-Dach
+    const rc = 0x8c3e2b;
+    const R = D.roofs;
+    const k = 1.35;
+    R.quad(R.vert(ax + nx * k, ay + ny * k, H + 0.9, rc, 0, 0), R.vert(bx + nx * k, by + ny * k, H + 0.9, rc, l, 0), R.vert(bx, by, H + 2.2, rc, l, 1.6), R.vert(ax, ay, H + 2.2, rc, 0, 1.6));
+    R.quad(R.vert(ax, ay, H + 2.2, rc, 0, 1.6), R.vert(bx, by, H + 2.2, rc, l, 1.6), R.vert(bx - nx * k, by - ny * k, H + 0.9, rc, l, 0), R.vert(ax - nx * k, ay - ny * k, H + 0.9, rc, 0, 0));
+    // Stützen des Dachs
+    for (let f = 0.5; f < l; f += 3) {
+      const tx = ax + ((bx - ax) * f) / l;
+      const ty = ay + ((by - ay) * f) / l;
+      box(s, tx + nx * 0.9, ty + ny * 0.9, H, H + 1.0, 0.15, 0.15, 0, 0x4a3426);
+    }
+    u += l;
+  }
 }

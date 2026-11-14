@@ -29,6 +29,8 @@ export class DriveController {
   private camHeading = 0;
   /** Blickwinkel relativ zur Fahrtrichtung (Zurückschauen mit B) */
   lookAngle = 0;
+  /** freie Kamera (für Fotos) */
+  camOverride: { pos: [number, number, number]; target: [number, number, number] } | null = null;
   /** Kamerawackeln 0..1 (nach Aufprall) */
   shake = 0;
   private lastHandbrake = false;
@@ -277,6 +279,17 @@ export class DriveController {
     const v = this.view;
     const car = this.car;
     const speed = Math.hypot(car.vx, car.vy);
+    if (this.view3D && this.camOverride) {
+      // freie Kamera (Fotos, Debug): Position und Blickpunkt vorgegeben
+      const o = this.camOverride;
+      v.cam3dPos.set(o.pos[0], o.pos[1], o.pos[2]);
+      v.cam3dTarget.set(o.target[0], o.target[1], o.target[2]);
+      v.cx = (o.pos[0] + o.target[0]) / 2;
+      v.cy = (o.pos[1] + o.target[1]) / 2;
+      v.mpp = 0.12;
+      v.rot = Math.atan2(o.target[1] - o.pos[1], o.target[0] - o.pos[0]);
+      return;
+    }
     if (this.view3D) {
       // Verfolgerkamera: folgt der Fahrtrichtung gedämpft, weiter weg bei hohem Tempo
       let d = car.heading - this.camHeading;

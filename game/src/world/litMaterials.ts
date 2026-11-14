@@ -19,6 +19,7 @@ export const lit = {
 /** zusätzliche Muster nur für 3D */
 export const PAT_ROOF_FLAT = 10;
 export const PAT_LAMP = 11;
+export const PAT_SOLAR = 12;
 
 const ROUGH: Record<number, number> = {
   [Pat.Plain]: 0.8,
@@ -33,6 +34,7 @@ const ROUGH: Record<number, number> = {
   [Pat.Facade]: 0.85,
   [PAT_ROOF_FLAT]: 0.92,
   [PAT_LAMP]: 0.5,
+  [PAT_SOLAR]: 0.2,
 };
 
 const COMMON = /* glsl */ `
@@ -131,11 +133,75 @@ void applyPattern(inout vec3 c) {
     float style = floor(vPUv.x / 1000.0);
     float u = mod(vPUv.x, 1000.0);
     float v = vPUv.y;
+    float d = detail(0.4);
+    vec3 base = c;
+    if (style >= 30.0) {
+      // Altstadt: Sandsteinquader (34-37), Fachwerk (30-33), Turm (38)
+      bool fw = style < 34.0;
+      bool tower = style >= 38.0;
+      // Quader
+      float row = floor(v / 0.45);
+      vec2 qg = vec2(u / 1.05 + mod(row, 2.0) * 0.5, v / 0.45);
+      vec2 qf = fract(qg);
+      float joint = 1.0 - smoothstep(0.0, 0.035, min(qf.x, 1.0 - qf.x)) * smoothstep(0.0, 0.07, min(qf.y, 1.0 - qf.y));
+      vec3 ashlar = base * (0.86 + 0.24 * h21(floor(qg) + 5.0)) * (1.0 - 0.28 * joint * detail(0.12));
+      float flo = fw ? 2.8 : 3.3;
+      float gf = fw ? 3.0 : 0.0;
+      float bay = fw ? 1.25 : 2.7;
+      vec2 g = vec2(u / bay, (v - gf) / flo);
+      vec2 f = fract(g);
+      float id = h21(floor(g) + style * 17.0 + floor(u / 50.0));
+      float win = 0.0;
+      float frame = 0.0;
+      if (tower) {
+        c = ashlar;
+        vec2 tg = vec2(u / 4.6, v / 7.0);
+        vec2 tf = fract(tg);
+        win = step(0.45, tf.x) * step(tf.x, 0.55) * step(0.4, tf.y) * step(tf.y, 0.62) * step(3.0, v);
+        id = h21(floor(tg) + 7.0);
+      } else if (fw) {
+        // Erdgeschoss massiv, darüber Fachwerk
+        if (v < gf) {
+          c = mix(ashlar, ashlar * vec3(1.05, 0.95, 0.9), 0.5);
+          float fx = fract(u / 3.6);
+          win = step(0.25, fx) * step(fx, 0.75) * step(0.6, v) * step(v, 2.4);
+        } else {
+          vec3 timber = vec3(0.075, 0.04, 0.022);
+          float bayI = floor(g.x);
+          float post = 1.0 - smoothstep(0.05, 0.075, min(f.x, 1.0 - f.x) * bay);
+          float rail = 1.0 - smoothstep(0.07, 0.1, min(f.y, 1.0 - f.y) * flo);
+          float sillL = 1.0 - smoothstep(0.05, 0.08, abs(f.y - 0.3) * flo);
+          float diag = 0.0;
+          float h = h21(vec2(bayI, floor(g.y)) + style);
+          if (h < 0.45) diag = 1.0 - smoothstep(0.05, 0.09, abs(f.x - (h < 0.22 ? f.y * 0.3 : 1.0 - f.y * 0.3)) * bay);
+          bool hasWin = mod(bayI, 2.0) < 1.0 && h > 0.2;
+          if (hasWin) {
+            win = step(0.16, f.x) * step(f.x, 0.84) * step(0.36, f.y) * step(f.y, 0.86);
+            diag = 0.0;
+          }
+          float beam = clamp(post + rail + sillL * (hasWin ? 1.0 : 0.6) + diag, 0.0, 1.0);
+          c = mix(base * (0.95 + 0.08 * vnoise(vPW * 1.3 + v)), timber * (0.8 + 0.4 * vnoise(vec2(u * 3.0, v * 3.0))), beam * detail(0.15));
+        }
+      } else {
+        // Sandstein mit Fenstern und Rahmen aus hellerem Stein
+        c = ashlar;
+        win = step(0.3, f.x) * step(f.x, 0.7) * step(0.28, f.y) * step(f.y, 0.82) * step(1.0, v);
+        frame = step(0.25, f.x) * step(f.x, 0.75) * step(0.22, f.y) * step(f.y, 0.88) * step(1.0, v) - win;
+        c = mix(c, base * 1.15 + 0.04, frame * d);
+      }
+      vec3 glass = mix(vec3(0.05, 0.07, 0.09), vec3(0.2, 0.24, 0.28), id * id);
+      // Laibung: oben im Fenster Schatten (wirkt eingelassen)
+      glass *= 1.0 - 0.55 * smoothstep(0.62, 0.84, fw ? f.y : f.y);
+      c = mix(c, glass, win * d);
+      if (win * d > 0.5) gPatRough = 0.1;
+      c *= 0.84 + 0.16 * smoothstep(0.0, 1.6, v);
+      vec3 warm = vec3(1.0, 0.7, 0.4);
+      gPatEmis = warm * step(id, 0.45) * win * uNight * 1.05 * d;
+    } else {
     float bay = 2.4 + mod(style, 3.0) * 0.45;
     float flo = 3.0 + mod(style * 7.0, 3.0) * 0.25;
     float shop = step(2.0, mod(style, 5.0)) * step(mod(style, 5.0), 2.5); // jedes 5. Haus mit Ladenzone
     float gf = 3.8 * shop;
-    vec3 base = c;
     // Geschossband (Gesims)
     float fl = (v - gf) / flo;
     float band = (1.0 - smoothstep(0.0, 0.05, fract(fl))) * step(gf, v);
@@ -155,8 +221,11 @@ void applyPattern(inout vec3 c) {
     }
     float id = h21(floor(g) + style * 17.0 + floor(u / 50.0));
     vec3 glass = mix(vec3(0.05, 0.07, 0.09), vec3(0.2, 0.24, 0.28), id * id);
-    float d = detail(0.4);
+    // Laibung: Schatten oben und seitlich im Fenster (wirkt eingelassen)
+    glass *= (1.0 - 0.5 * smoothstep(0.6, 0.82, f.y)) * (1.0 - 0.25 * smoothstep(ww + 0.06, ww, f.x));
     c = mix(c, base * 1.18 + 0.05, clamp(frame + sill, 0.0, 1.0) * d);
+    // Fensterbank wirft einen kleinen Schatten
+    c *= 1.0 - 0.18 * step(ww - 0.07, f.x) * step(f.x, 1.0 - ww + 0.07) * step(0.15, f.y) * step(f.y, 0.2) * step(gf + 0.5, v) * d;
     c = mix(c, glass, max(win, sw) * d);
     if (max(win, sw) * d > 0.5) gPatRough = 0.12;
     c *= 0.93 + 0.08 * vnoise(vPW * 0.6 + v * 0.3);
@@ -166,6 +235,17 @@ void applyPattern(inout vec3 c) {
     float on = step(id, 0.42) * win + sw * 1.4;
     vec3 warm = mix(vec3(1.0, 0.72, 0.42), vec3(0.85, 0.9, 1.0), step(0.8, h21(floor(g) + 91.0)));
     gPatEmis = warm * on * uNight * 1.05 * d;
+    }
+  } else if (uPat == 12) {
+    // Solarmodule: dunkelblau mit Zellraster, glänzend
+    vec2 g = vec2(vPUv.x / 1.05, vPUv.y / 1.7);
+    vec2 f = fract(g);
+    float gap = 1.0 - smoothstep(0.0, 0.03, min(min(f.x, 1.0 - f.x), min(f.y, 1.0 - f.y)));
+    vec2 cg = fract(vec2(vPUv.x / 0.17, vPUv.y / 0.17));
+    float cell = 1.0 - smoothstep(0.0, 0.08, min(min(cg.x, 1.0 - cg.x), min(cg.y, 1.0 - cg.y)));
+    c = mix(vec3(0.02, 0.04, 0.09), vec3(0.6, 0.62, 0.65), gap * detail(0.05));
+    c += vec3(0.03, 0.05, 0.08) * cell * detail(0.02);
+    gPatRough = 0.18;
   } else if (uPat == 11) {
     // Laternenkopf: nachts hell
     gPatEmis = vec3(1.0, 0.82, 0.55) * uNight * 6.0;
