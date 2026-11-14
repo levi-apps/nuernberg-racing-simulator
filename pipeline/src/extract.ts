@@ -62,6 +62,39 @@ export interface Extract {
   areas: RawArea[];
   lines: RawLine[];
   places: Array<{ name: string; p: Pt; kind: string }>;
+  addresses: RawAddress[];
+  pois: RawPoi[];
+}
+
+export interface RawAddress {
+  street: string;
+  num: string;
+  p: Pt;
+}
+
+export type PoiCat = 'food' | 'shop' | 'hotel' | 'health' | 'station' | 'culture' | 'school' | 'emergency' | 'office';
+
+export interface RawPoi {
+  name: string;
+  cat: PoiCat;
+  sub: string;
+  p: Pt;
+}
+
+/** Kategorie eines benannten Orts (für Aufträge) */
+export function poiCat(t: Tags): { cat: PoiCat; sub: string } | null {
+  const a = t.amenity;
+  if (a === 'restaurant' || a === 'fast_food' || a === 'cafe' || a === 'ice_cream' || a === 'biergarten' || a === 'pub' || a === 'bar') return { cat: 'food', sub: a };
+  if (a === 'hospital' || a === 'clinic' || a === 'doctors' || a === 'pharmacy') return { cat: 'health', sub: a };
+  if (a === 'police' || a === 'fire_station') return { cat: 'emergency', sub: a };
+  if (a === 'cinema' || a === 'theatre' || a === 'arts_centre' || a === 'nightclub') return { cat: 'culture', sub: a };
+  if (a === 'school' || a === 'university' || a === 'college') return { cat: 'school', sub: a };
+  if (t.tourism === 'hotel' || t.tourism === 'hostel' || t.tourism === 'guest_house') return { cat: 'hotel', sub: t.tourism };
+  if (t.tourism === 'museum' || t.tourism === 'attraction' || t.tourism === 'zoo') return { cat: 'culture', sub: t.tourism };
+  if (t.railway === 'station' || (t.public_transport === 'station' && t.train === 'yes')) return { cat: 'station', sub: 'station' };
+  if (t.shop) return { cat: 'shop', sub: t.shop };
+  if (t.office === 'company' || t.office === 'government') return { cat: 'office', sub: t.office };
+  return null;
 }
 
 /** Sortierte Knotentabelle (IDs aufsteigend wie in der PBF-Datei) */
@@ -111,6 +144,11 @@ export function extract(pbfPath: string, log: (s: string) => void): Extract {
   const nodes = new NodeStore();
   const controlNodes = new Map<number, RawPoint>();
   const placeNodes: Array<{ name: string; p: Pt; kind: string }> = [];
+  const addrPts: RawAddress[] = [];
+  const poiPts: RawPoi[] = [];
+  type PW = { refs: number[]; tags: Tags };
+  /** Wege (meist Gebäude) mit Adresse oder Name -> Mittelpunkt */
+  const tagWays: PW[] = [];
 
   // Wege: nach Typ getrennt sammeln
   type W = { id: number; refs: number[]; tags: Tags };
@@ -140,11 +178,17 @@ export function extract(pbfPath: string, log: (s: string) => void): Extract {
       nodes.push(id, x, y);
       if (tags) {
         if (isControl(tags)) controlNodes.set(id, { id, p: [x, y], tags });
-        if (tags.name && (tags.place === 'suburb' || tags.place === 'quarter' || tags.place === 'neighbourhood' || tags.tourism === 'attraction' || tags.railway === 'station' || tags.amenity === 'townhall'))
+        if (tags['addr:housenumber'] && tags['addr:street']) addrPts.push({ street: tags['addr:street'], num: tags['addr:housenumber'], p: [x, y] });
+        if (tags.name) {
+          const pc = poiCat(tags);
+          if (pc) poiPts.push({ name: tags.name, ...pc, p: [x, y] });
+        }
+        if (tags.name && (tags.place === 'suburb' || tags.place === 'quarter' || tags.place === 'neighbourhood' || tags.place === 'village' || tags.place === 'hamlet' || tags.tourism === 'attraction' || tags.railway === 'station' || tags.amenity === 'townhall'))
           placeNodes.push({ name: tags.name, p: [x, y], kind: tags.place ?? tags.tourism ?? tags.railway ?? tags.amenity ?? '' });
       }
     },
     way(id, refs, tags) {
+      if ((tags['addr:housenumber'] && tags['addr:street']) || (tags.name && poiCat(tags))) tagWays.push({ refs, tags });
       if (roadClass(tags)) roadWays.push({ id, refs, tags });
       else if (tags.building && tags.building !== 'no') buildingWays.push({ id, refs, tags });
       else if (lineKind(tags)) lineWays.push({ id, refs, tags });
@@ -269,8 +313,38 @@ export function extract(pbfPath: string, log: (s: string) => void): Extract {
 
   const places = placeNodes.filter((p) => inside.contains(p.p));
 
+  // Adressen und benannte Orte an Wegen (Gebäude, Flächen): Mittelpunkt
+  for (const w of tagWays) {
+    const r = resolve(w.refs);
+    if (!r || r.pts.length < 3) continue;
+    const c = ringCentroid(r.pts.slice(0, -1));
+    if (w.tags['addr:housenumber'] && w.tags['addr:street']) addrPts.push({ street: w.tags['addr:street'], num: w.tags['addr:housenumber'], p: c });
+    if (w.tags.name) {
+      const pc = poiCat(w.tags);
+      if (pc) poiPts.push({ name: w.tags.name, ...pc, p: c });
+    }
+  }
+  // doppelte Adressen (Knoten + Gebäude) zusammenfassen
+  const seenAddr = new Set<string>();
+  const addresses = addrPts.filter((a) => {
+    if (!inside.contains(a.p)) return false;
+    const k = `${a.street}|${a.num}`;
+    if (seenAddr.has(k)) return false;
+    seenAddr.add(k);
+    return true;
+  });
+  const seenPoi = new Set<string>();
+  const pois = poiPts.filter((a) => {
+    if (!inside.contains(a.p)) return false;
+    const k = `${a.name}|${Math.round(a.p[0] / 50)}|${Math.round(a.p[1] / 50)}`;
+    if (seenPoi.has(k)) return false;
+    seenPoi.add(k);
+    return true;
+  });
+  log(`  ${addresses.length.toLocaleString('de')} Adressen, ${pois.length.toLocaleString('de')} benannte Orte`);
+
   log(`  Im Stadtgebiet: ${roads.length.toLocaleString('de')} Straßen, ${buildings.length.toLocaleString('de')} Gebäude, ${areas.length.toLocaleString('de')} Flächen, ${lines.length.toLocaleString('de')} Linien`);
-  return { boundary, inside, roads, controlNodes, restrictions, buildings, areas, lines, places };
+  return { boundary, inside, roads, controlNodes, restrictions, buildings, areas, lines, places, addresses, pois };
 }
 
 function pointInRingSafe(p: Pt, ring: Pt[]): boolean {

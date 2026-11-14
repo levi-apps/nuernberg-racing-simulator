@@ -17,6 +17,7 @@ import {
   type Marking,
   type Overview,
   type Place,
+  type RoadLabel,
   type RoadSurface,
   type SignalHead,
   type Tile,
@@ -44,7 +45,7 @@ class TileSet {
     const k = tileKey(tx, ty);
     let t = this.tiles.get(k);
     if (!t) {
-      t = { v: FORMAT_VERSION, tx, ty, surfaces: [], markings: [], lanes: [], connectors: [], signals: [], buildings: [], areas: [], lines: [] };
+      t = { v: FORMAT_VERSION, tx, ty, surfaces: [], markings: [], lanes: [], connectors: [], signals: [], buildings: [], areas: [], lines: [], labels: [] };
       this.tiles.set(k, t);
     }
     return t;
@@ -56,6 +57,19 @@ class TileSet {
     const y1 = Math.floor(bb.maxY / TILE_SIZE);
     for (let x = x0; x <= x1; x++) for (let y = y0; y <= y1; y++) fn(this.get(x, y));
   }
+}
+
+function pointAtLen(pts: Pt[], s: number): Pt {
+  let acc = 0;
+  for (let i = 1; i < pts.length; i++) {
+    const l = Math.hypot(pts[i][0] - pts[i - 1][0], pts[i][1] - pts[i - 1][1]);
+    if (acc + l >= s || i === pts.length - 1) {
+      const t = l > 0 ? Math.min(1, Math.max(0, (s - acc) / l)) : 0;
+      return [pts[i - 1][0] + (pts[i][0] - pts[i - 1][0]) * t, pts[i - 1][1] + (pts[i][1] - pts[i - 1][1]) * t];
+    }
+    acc += l;
+  }
+  return pts[pts.length - 1];
 }
 
 /** Lange Linien in Stücke von max. `maxLen` Metern zerlegen */
@@ -122,6 +136,34 @@ export function writeWorld(
     const con: Connector = { id: c.id, node: c.node, from: c.from, to: c.to, turn: c.turn, pts: flat(c.pts), len: Math.round(c.len * 10) / 10 };
     ts.each(bboxOf(c.pts), (t) => t.connectors.push(con));
   }
+  // Straßennamen: ein Beschriftungspunkt je benanntem Abschnitt, lange Abschnitte alle ~180 m
+  let labelCount = 0;
+  for (const seg of net.segments) {
+    const name = seg.road.tags.name;
+    if (!name || seg.trimmed.length < 2) continue;
+    const L = polylineLength(seg.trimmed);
+    if (L < 18) continue;
+    const n = Math.max(1, Math.round(L / 180));
+    for (let k = 0; k < n; k++) {
+      const s0 = (L * (k + 0.5)) / n;
+      const a = pointAtLen(seg.trimmed, Math.max(0, s0 - 4));
+      const b = pointAtLen(seg.trimmed, Math.min(L, s0 + 4));
+      const m = pointAtLen(seg.trimmed, s0);
+      const lbl: RoadLabel = {
+        n: name,
+        x: dm(m[0]),
+        y: dm(m[1]),
+        a: Math.round((Math.atan2(b[1] - a[1], b[0] - a[0]) * 180) / Math.PI),
+        len: Math.round(L / n),
+        cls: seg.cls,
+        layer: seg.layer,
+      };
+      ts.each(bboxOf([m]), (t) => t.labels!.push(lbl));
+      labelCount++;
+    }
+  }
+  log(`  ${labelCount.toLocaleString('de')} Straßennamen-Beschriftungen`);
+
   for (const h of ctl.heads) {
     const sh: SignalHead = { id: h.id, ctrl: h.ctrl, grp: h.grp, x: dm(h.p[0]), y: dm(h.p[1]), hdg: Math.round((h.hdg * 180) / Math.PI), w: Math.round(h.w * 10) / 10 };
     ts.each(bboxOf([h.p]), (t) => t.signals.push(sh));
@@ -186,7 +228,7 @@ export function writeWorld(
   };
   write('overview.json', overview);
 
-  const places: Place[] = ex.places.map((p) => ({ name: p.name, x: Math.round(p.p[0]), y: Math.round(p.p[1]) }));
+  const places: Place[] = ex.places.map((p) => ({ name: p.name, x: Math.round(p.p[0]), y: Math.round(p.p[1]), kind: p.kind }));
   write('places.json', places);
 
   const manifest: Manifest = {

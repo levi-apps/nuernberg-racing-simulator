@@ -23,6 +23,7 @@ body {
 }
 #panel {
   position: fixed;
+  z-index: 3;
   top: 12px;
   left: 12px;
   width: 300px;
@@ -115,6 +116,7 @@ body {
 #drive-hud {
   position: fixed;
   inset: 0;
+  z-index: 2;
   pointer-events: none;
   font-family: system-ui, -apple-system, 'Segoe UI', sans-serif;
 }
@@ -190,8 +192,8 @@ body {
 }
 #drive-hud .help {
   position: absolute;
-  left: 16px;
-  bottom: 30px;
+  right: 22px;
+  bottom: 110px;
   padding: 10px 14px;
   background: rgba(255, 255, 255, 0.88);
   border-radius: 10px;
@@ -224,4 +226,241 @@ body {
   border-radius: 8px;
   font-size: 14px;
   font-weight: 600;
+}
+
+/* ---------- Straßennamen ---------- */
+#street-labels {
+  position: fixed;
+  inset: 0;
+  z-index: 1;
+  pointer-events: none;
+  overflow: hidden;
+}
+#street-labels div {
+  position: absolute;
+  left: 0;
+  top: 0;
+  white-space: nowrap;
+  font: 600 11.5px/1 system-ui, -apple-system, 'Segoe UI', sans-serif;
+  color: #3b3f46;
+  text-shadow:
+    0 0 2px #fff,
+    0 0 2px #fff,
+    0 0 3px #fff,
+    0 0 4px #fff;
+  letter-spacing: 0.01em;
+  will-change: transform;
+}
+#street-labels div.major {
+  font-size: 13px;
+  font-weight: 700;
+  color: #2b2e33;
+}
+
+/* ---------- Navigation und Aufträge ---------- */
+#drive-hud .nav-panel {
+  position: absolute;
+  left: 50%;
+  top: 14px;
+  transform: translateX(-50%);
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 8px 16px 8px 10px;
+  background: rgba(31, 92, 168, 0.94);
+  color: #fff;
+  border-radius: 12px;
+  box-shadow: 0 2px 10px rgba(0, 0, 0, 0.25);
+  min-width: 260px;
+}
+#drive-hud .nav-arrow {
+  font: 700 34px/1 system-ui, sans-serif;
+  width: 42px;
+  text-align: center;
+}
+#drive-hud .nav-text {
+  font-size: 17px;
+  font-weight: 700;
+}
+#drive-hud .nav-sub {
+  font-size: 13px;
+  opacity: 0.85;
+  margin-top: 2px;
+}
+#drive-hud .violations {
+  top: auto;
+  bottom: 74px;
+}
+#drive-hud .job-panel {
+  position: absolute;
+  left: 16px;
+  top: 14px;
+  max-width: 330px;
+  padding: 10px 14px;
+  background: rgba(255, 255, 255, 0.94);
+  border-radius: 12px;
+  box-shadow: 0 2px 10px rgba(0, 0, 0, 0.18);
+  font-size: 14px;
+  line-height: 1.5;
+  color: #1d1f23;
+}
+#drive-hud .job-panel .job-title {
+  font-weight: 800;
+  font-size: 15px;
+  margin-bottom: 2px;
+}
+#drive-hud .job-panel .muted {
+  color: #6b6f76;
+  font-size: 12.5px;
+}
+#drive-hud .job-panel .warn {
+  color: #c4161c;
+}
+#drive-hud .money {
+  position: absolute;
+  right: 22px;
+  top: 14px;
+  padding: 6px 12px;
+  background: rgba(20, 22, 26, 0.82);
+  color: #8ff0a4;
+  border-radius: 10px;
+  font: 700 18px/1.2 ui-monospace, SFMono-Regular, Menlo, monospace;
+}
+#drive-hud .target-pointer {
+  position: absolute;
+  left: 0;
+  top: 0;
+  width: 36px;
+  height: 36px;
+}
+#drive-hud .target-pointer svg {
+  width: 36px;
+  height: 36px;
+  fill: #f5b400;
+  stroke: #6b4b00;
+  stroke-width: 2;
+  filter: drop-shadow(0 1px 3px rgba(0, 0, 0, 0.4));
+}
+#drive-hud .minimap-frame {
+  position: absolute;
+  left: 16px;
+  bottom: 16px;
+  width: 210px;
+  height: 210px;
+  border-radius: 14px;
+  box-shadow:
+    0 0 0 3px rgba(20, 22, 26, 0.85),
+    0 3px 12px rgba(0, 0, 0, 0.35);
+}
+#drive-hud .job-toast {
+  position: absolute;
+  left: 50%;
+  top: 30%;
+  transform: translateX(-50%) scale(0.95);
+  padding: 14px 22px;
+  background: rgba(20, 22, 26, 0.9);
+  color: #fff;
+  border-radius: 14px;
+  font-size: 15px;
+  line-height: 1.6;
+  text-align: center;
+  opacity: 0;
+  transition:
+    opacity 0.35s,
+    transform 0.35s;
+}
+#drive-hud .job-toast b {
+  font-size: 20px;
+  color: #8ff0a4;
+}
+
+/* ---------- Startmenü ---------- */
+#start-menu {
+  position: fixed;
+  inset: 0;
+  background: rgba(20, 24, 30, 0.55);
+  backdrop-filter: blur(3px);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 10;
+}
+#start-menu .sm-box {
+  width: min(760px, 92vw);
+  max-height: 88vh;
+  display: flex;
+  flex-direction: column;
+  background: #fff;
+  border-radius: 18px;
+  padding: 24px 26px 18px;
+  box-shadow: 0 10px 40px rgba(0, 0, 0, 0.35);
+}
+#start-menu h1 {
+  margin: 0;
+  font-size: 26px;
+  letter-spacing: -0.01em;
+}
+#start-menu .sm-sub {
+  margin: 4px 0 14px;
+  color: #555;
+  font-size: 15px;
+}
+#start-menu .sm-top {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+#start-menu .sm-btn {
+  padding: 9px 14px;
+  border-radius: 10px;
+  border: 1px solid #d5d7db;
+  background: #f5f6f8;
+  font-size: 14px;
+  cursor: pointer;
+}
+#start-menu .sm-btn.sm-main {
+  background: #d7263d;
+  border-color: #d7263d;
+  color: #fff;
+  font-weight: 700;
+}
+#start-menu .sm-search {
+  width: 100%;
+  margin: 14px 0 10px;
+  padding: 9px 12px;
+  font-size: 15px;
+  border: 1px solid #c9ccd1;
+  border-radius: 10px;
+}
+#start-menu .sm-list {
+  overflow: auto;
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(160px, 1fr));
+  gap: 6px;
+  padding: 2px;
+}
+#start-menu .sm-district {
+  text-align: left;
+  padding: 7px 10px;
+  border-radius: 8px;
+  border: 1px solid #e3e5e8;
+  background: #fafbfc;
+  font-size: 13.5px;
+  cursor: pointer;
+}
+#start-menu .sm-district:hover,
+#start-menu .sm-btn:hover {
+  border-color: #2f7de1;
+  background: #eef4fd;
+}
+#start-menu .sm-btn.sm-main:hover {
+  background: #b91d31;
+}
+#start-menu .sm-empty {
+  color: #888;
+}
+#start-menu .sm-foot {
+  margin: 12px 0 0;
+  font-size: 12.5px;
+  color: #666;
 }

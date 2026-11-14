@@ -33,6 +33,8 @@ export class DriveController {
   traffic?: TrafficSim;
   /** wird aufgerufen, wenn das Auto weit versetzt wird */
   onTeleport?: () => void;
+  /** Aufprall (Gebäude oder Fahrzeug) mit Geschwindigkeit in m/s */
+  onImpact?: (speed: number) => void;
   get spawnedOk(): boolean {
     return this.spawned;
   }
@@ -145,6 +147,7 @@ export class DriveController {
             if (hit && hit.speed > 4 && v.time - this.lastImpact > 0.6) {
               this.lastImpact = v.time;
               this.hud.message(hit.speed > 12 ? 'Krach!' : 'Rumms', 0.9);
+              this.onImpact?.(hit.speed);
             }
           }
         }
@@ -153,6 +156,7 @@ export class DriveController {
         if (imp > 3 && v.time - this.lastImpact > 0.6) {
           this.lastImpact = v.time;
           this.hud.message(imp > 10 ? 'Unfall!' : 'Blechschaden', 1.2);
+          this.onImpact?.(imp);
         }
       }
       // Stadtgrenze

@@ -44,6 +44,7 @@ export class TrafficRenderer {
       im.count = 0;
       im.renderOrder = order;
       im.frustumCulled = false;
+      im.layers.set(1); // nur Hauptansicht
       im.instanceMatrix.setUsage(THREE.DynamicDrawUsage);
       this.group.add(im);
       return im;

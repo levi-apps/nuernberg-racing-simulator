@@ -31,6 +31,8 @@ export class Hud {
       '<b>R</b> zurück auf die Straße',
       '<b>C</b> Kamera drehen',
       '<b>T</b> Verkehr an/aus, <b>+ / −</b> Dichte',
+      '<b>1</b> Taxi, <b>2</b> Kurier, <b>X</b> beenden',
+      '<b>O</b> Startgebiet wählen',
       '<b>K</b> Karte / Debug',
       '<b>H</b> Hilfe aus',
     ].join('<br>');

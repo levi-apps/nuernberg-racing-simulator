@@ -17,7 +17,7 @@ import {
   type Tile,
 } from '@nrs/shared';
 import { FillBuilder, LineBuilder, setSlotColor } from './geometry.ts';
-import { MATERIALS, ORDER, TileView, type LayerName } from './TileView.ts';
+import { MATERIALS, ORDER, RL_MAIN, RL_MINI, TileView, type LayerName } from './TileView.ts';
 import { AREA_COLORS, BACKGROUND, ROAD_COLORS, SIGNAL_COLORS, TURN_COLORS } from './style.ts';
 
 /** Ab dieser Auflösung (m pro Pixel) werden Kacheln geladen, darüber nur die Übersicht. */
@@ -36,6 +36,7 @@ export class WorldView {
   readonly renderer: THREE.WebGLRenderer;
   readonly scene = new THREE.Scene();
   readonly camera = new THREE.OrthographicCamera(-1, 1, 1, -1, -100, 100);
+  readonly miniCamera = new THREE.OrthographicCamera(-1, 1, 1, -1, -100, 100);
   /** Kameramitte (m), Maßstab (m pro CSS-Pixel), Drehung: Weltrichtung von "oben" am Bildschirm (rad, PI/2 = Norden) */
   cx = 0;
   cy = 0;
@@ -85,6 +86,59 @@ export class WorldView {
     this.renderer.setClearColor(BACKGROUND);
     this.scene.add(this.bigAreas, this.overview, this.highlight);
     this.highlight.renderOrder = 50;
+    this.renderer.autoClear = false;
+    this.camera.layers.enable(RL_MAIN);
+    this.miniCamera.layers.set(0);
+    this.miniCamera.layers.enable(RL_MINI);
+  }
+
+  /** Welt -> Bildschirmpixel (CSS) */
+  toScreen(x: number, y: number): [number, number] {
+    const w = this.canvas.clientWidth;
+    const h = this.canvas.clientHeight;
+    const dx = x - this.cx;
+    const dy = y - this.cy;
+    const ux = Math.cos(this.rot);
+    const uy = Math.sin(this.rot);
+    const right = dx * uy - dy * ux;
+    const up = dx * ux + dy * uy;
+    return [w / 2 + right / this.mpp, h / 2 - up / this.mpp];
+  }
+
+  /**
+   * Minikarte als zweiter Durchgang in ein Rechteck (CSS-Pixel, Ursprung unten links).
+   * Zeigt alle geladenen Kacheln, die Übersichtsstraßen und Objekte der Ebene RL_MINI.
+   */
+  renderMinimap(rx: number, ry: number, rw: number, rh: number, cx: number, cy: number, rot: number, mpp: number): void {
+    const cam = this.miniCamera;
+    cam.left = (-rw / 2) * mpp;
+    cam.right = (rw / 2) * mpp;
+    cam.top = (rh / 2) * mpp;
+    cam.bottom = (-rh / 2) * mpp;
+    cam.position.set(cx, cy, 50);
+    cam.up.set(Math.cos(rot), Math.sin(rot), 0);
+    cam.lookAt(cx, cy, 0);
+    cam.updateProjectionMatrix();
+    const vis: boolean[] = [];
+    for (const v of this.views.values()) {
+      vis.push(v.group.visible);
+      v.group.visible = true;
+    }
+    const ovVis = this.overview.visible;
+    this.overview.visible = true;
+    const r = this.renderer;
+    r.setScissorTest(true);
+    r.setScissor(rx, ry, rw, rh);
+    r.setViewport(rx, ry, rw, rh);
+    r.setClearColor(0xe9e4d8);
+    r.clear();
+    r.render(this.scene, cam);
+    r.setScissorTest(false);
+    r.setViewport(0, 0, this.canvas.clientWidth, this.canvas.clientHeight);
+    r.setClearColor(BACKGROUND);
+    let i = 0;
+    for (const v of this.views.values()) v.group.visible = vis[i++];
+    this.overview.visible = ovVis;
   }
 
   async init(base = 'world'): Promise<void> {
@@ -311,6 +365,7 @@ export class WorldView {
     this.camera.updateProjectionMatrix();
     this.updateTiles();
     if (this.frame % 6 === 0) this.updateSignals();
+    this.renderer.clear();
     this.renderer.render(this.scene, this.camera);
   }
 
@@ -420,6 +475,7 @@ export class WorldView {
     const m = new THREE.Mesh(fb.build(), new THREE.MeshBasicMaterial({ vertexColors: true, depthTest: false, transparent: true, opacity: 0.85, side: THREE.DoubleSide }));
     m.renderOrder = 40;
     m.frustumCulled = false;
+    m.layers.set(RL_MAIN);
     this.highlight.add(m);
   }
 

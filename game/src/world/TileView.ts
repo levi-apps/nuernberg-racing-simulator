@@ -65,6 +65,11 @@ export const MATERIALS = {
   marker: meshMat(),
 };
 
+/** Three.js-Render-Ebenen */
+export const RL_MAIN = 1;
+export const RL_MINI = 2;
+const MINIMAP_LAYERS = new Set<LayerName>(['areas', 'roads', 'buildings', 'rail']);
+
 export interface SignalSlot {
   ctrl: number;
   grp: number;
@@ -84,6 +89,8 @@ export class TileView {
   private addObj(layer: LayerName, obj: THREE.Object3D, order: number) {
     obj.renderOrder = order;
     obj.frustumCulled = false;
+    // Render-Ebenen: 0 = Hauptansicht und Minikarte, 1 = nur Hauptansicht
+    if (!MINIMAP_LAYERS.has(layer)) obj.layers.set(RL_MAIN);
     this.group.add(obj);
     const l = this.layers.get(layer) ?? [];
     l.push(obj);

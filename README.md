@@ -2,7 +2,7 @@
 
 Mit dem Auto durch das echte Nürnberg fahren, mit dem echten Straßennetz und echten Gebäuden, Kreuzungen und Ampeln aus OpenStreetMap. Erst in 2D aus der Vogelperspektive, später in 3D.
 
-Stand: **Schritt 3 – Ampeln und KI-Verkehr.** (Schritt 1: Datenpipeline und Debugansicht, Schritt 2: Fahren)
+Stand: **Schritt 4 – Aufträge (Taxi, Kurier), Navigation, Minikarte, Straßennamen, Startgebiet.** (Schritt 1: Datenpipeline und Debugansicht, Schritt 2: Fahren, Schritt 3: Ampeln und KI-Verkehr)
 
 ## Schnellstart
 
@@ -27,6 +27,9 @@ npm run dev             # Spiel unter http://localhost:5173
 | Leertaste | Handbremse (driften) |
 | R | zurück auf die nächste Straße |
 | C | Kamera: Norden oben ↔ dreht mit dem Auto |
+| 1 / 2 | Taxi- bzw. Kurierdienst beginnen |
+| X | Dienst beenden bzw. Navigation beenden |
+| O | Startgebiet (Stadtteil) wählen |
 | T | KI-Verkehr an/aus |
 | + / − | Verkehrsdichte (25–250 %) |
 | K | Karte / Debugansicht ein- und ausblenden |
@@ -35,12 +38,22 @@ npm run dev             # Spiel unter http://localhost:5173
 
 Gamepads werden mit der Standardbelegung unterstützt: RT Gas, LT Bremse, linker Stick lenkt, A ist die Handbremse.
 
-- Die Karte startet am Hauptmarkt. Mit `#x,y` in der URL startest du an einer anderen Stelle (Meter, siehe Koordinaten).
+- **Startgebiet:** Beim Start wählst du einen von rund 100 Stadt- und Ortsteilen (aus OSM). Du kannst auch einen zufälligen nehmen oder an der letzten Position weiterfahren. Die Taste O öffnet die Auswahl jederzeit. Mit `#x,y` in der URL startest du ohne Menü direkt an einer Stelle (Meter, siehe Koordinaten).
+- **Straßennamen:** Sie stehen entlang der Straßen, auch bei Querstraßen. Wichtige Straßen haben Vorrang, und Beschriftungen überdecken sich nicht.
 - Auf der Straße fährt das Auto am schnellsten. Im Gelände ist es langsamer und rutschiger, im Wasser kommt es kaum voran.
 - Gebäude sind fest. Unter Gebäuden hindurch kann man nur fahren, wenn dort eine Straße verläuft (Durchfahrten).
 - Auf Brücken und in Tunneln fährt das Auto auf einer eigenen Ebene und prallt nicht gegen darunter- oder darüberliegende Gebäude.
 - Unten im HUD stehen Straßenname und Tempolimit. Bei mehr als 5 km/h über dem Limit blinkt das Schild (noch ohne Folgen).
 - Kacheln werden beim Fahren um das Auto herum nachgeladen. Solange die Umgebung fehlt, steht die Physik kurz still.
+
+## Aufträge und Navigation
+
+- **Taxi (Taste 1):** Ein Fahrgast wartet an einer echten Adresse in der Nähe. Fahr hin und halte neben dem gelben Ring an (unter 4 km/h). Dann geht es zum Wunschziel: einer Adresse oder einem Ort wie Hotel, Bahnhof, Museum oder Restaurant. Der Fahrpreis beträgt 4,90 € plus 2,50 € pro km (Spielwerte). Für eine zügige Fahrt gibt es bis zu 20 % Trinkgeld; jeder Unfall und jede rote Ampel kostet 10 %.
+- **Kurier (Taste 2):** Du holst eine Bestellung bei einem Restaurant oder Café ab und lieferst sie an eine Adresse, mit Zeitlimit. Bezahlt werden 5 € plus 1,60 € pro km und ein Zeitbonus; Unfälle beschädigen die Ware. Bei Verspätung gibt es kein Geld.
+- **Im Dienst:** Nach jedem Auftrag kommt automatisch der nächste. X beendet den Dienst. Der Kontostand wird im Browser gespeichert.
+- **Navigation:** Die Route wird über den Spurgraphen berechnet, inklusive Einbahnstraßen und Abbiegeverboten. Die Kosten sind Fahrzeit plus Zuschläge für Abbiegen und Ampeln, eine Route dauert wenige Millisekunden. Oben steht der nächste Abbiegehinweis mit Straßenname, Restweg und Restzeit. Auf der Straße liegt eine blaue Linie, und ein gelber Pfeil am Bildrand zeigt zum Ziel, wenn es nicht sichtbar ist. Wer abbiegt, bekommt nach etwa 1,5 s eine neue Route.
+- **Minikarte (unten links):** etwa 670 × 670 m um dich, mit Route und Ziel.
+- **Debugansicht:** „Navigation hierher“ bei einer angeklickten Spur startet eine freie Navigation.
 
 ## KI-Verkehr
 
@@ -75,11 +88,15 @@ pipeline/   OSM -> Spielwelt
   src/control.ts      Ampeln, Phasen, Vorfahrt, rechts vor links
   src/surfaces.ts     Fahrbahnflächen und Markierungen
   src/validate.ts     Prüfung des Spurgraphen (Sackgassen, Zusammenhang)
-  src/tiles.ts        Ausgabe als Kacheln
+  src/tiles.ts        Ausgabe als Kacheln (inkl. Beschriftungspunkte für Straßennamen)
+  src/nav.ts          Routinggraph, Adressen und Orte einrasten
 game/       Browser-Client (Vite, Three.js)
   src/world/          Darstellung der Welt, Kachel-Nachladen (für Fahren und Debug)
   src/drive/          Auto (Physik, Kollision, Eingabe), Kamera, HUD
   src/traffic/        KI-Verkehr (Graph mit Konfliktpunkten, Simulation, Darstellung)
+  src/nav/            Routing (A*), Navigation, Minikarten-Objekte
+  src/missions/       Taxi- und Kurieraufträge, Oberfläche
+  src/ui/             Startmenü (Stadtteilauswahl)
   src/debug/          Debug-Oberfläche
 data/raw/   OSM-Rohdaten (nicht im Repo)
 ```
@@ -98,6 +115,10 @@ Meter in ETRS89 / UTM 32N (EPSG:25832), verschoben auf den Hauptmarkt als Urspru
 | `areas.json` | große Flächen (Wald, Wasser, Parks) |
 | `overview.json` | Hauptstraßen für die Übersicht |
 | `places.json` | Stadtteile und Sehenswürdigkeiten |
+| `routing.bin` | Routinggraph über alle Spuren (binär, siehe `parseRouting` in `shared/`) |
+| `names.json` | Straßennamen für Abbiegehinweise |
+| `addresses.json` | ~74.000 Adressen, eingerastet auf die nächste öffentliche Spur |
+| `pois.json` | ~5.700 benannte Orte (Gastronomie, Läden, Hotels, Kliniken …) |
 
 Objekte, die über Kachelgrenzen reichen, stehen in mehreren Kacheln mit derselben `id`.
 

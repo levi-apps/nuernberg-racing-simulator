@@ -173,6 +173,17 @@ export interface Line extends Identified {
   pts: number[];
 }
 
+/** Beschriftung eines Straßenabschnitts: Mittelpunkt (dm), Richtung in Grad, Länge (m) */
+export interface RoadLabel {
+  n: string;
+  x: number;
+  y: number;
+  a: number;
+  len: number;
+  cls: RoadClass;
+  layer: number;
+}
+
 export interface Tile {
   v: number;
   tx: number;
@@ -185,6 +196,7 @@ export interface Tile {
   buildings: Building[];
   areas: Area[];
   lines: Line[];
+  labels?: RoadLabel[];
 }
 
 export interface SignalPhase {
@@ -261,4 +273,90 @@ export interface Place {
   name: string;
   x: number;
   y: number;
+  /** suburb, quarter, neighbourhood, village, hamlet, attraction, station, townhall */
+  kind?: string;
+}
+
+// ------------------------------------------------------------------ Navigation und Aufträge
+
+export const ROUTING_MAGIC = 0x3153524e; // "NRS1"
+export const TURN_CODES: Turn[] = ['through', 'left', 'right', 'uturn', 'merge'];
+
+/** Flags je Spur im Routinggraphen */
+export const LANE_ISO = 1;
+export const LANE_SIGNAL = 2;
+export const LANE_MINOR_CTRL = 4;
+export const LANE_SERVICE = 8;
+
+/** Routinggraph über alle Spuren (Kanten = Spurverbinder) */
+export interface RoutingGraph {
+  n: number;
+  e: number;
+  x0: Int32Array;
+  y0: Int32Array;
+  x1: Int32Array;
+  y1: Int32Array;
+  name: Int32Array;
+  outStart: Uint32Array;
+  len: Float32Array;
+  target: Int32Array;
+  conLen: Float32Array;
+  vmax: Uint8Array;
+  flags: Uint8Array;
+  layer: Int8Array;
+  turn: Uint8Array;
+}
+
+export function parseRouting(buf: ArrayBuffer): RoutingGraph {
+  const head = new Int32Array(buf, 0, 4);
+  if (head[0] !== ROUTING_MAGIC) throw new Error('routing.bin: falsches Format');
+  const n = head[1];
+  const e = head[2];
+  let o = 16;
+  const i32 = (k: number) => {
+    const a = new Int32Array(buf, o, k);
+    o += k * 4;
+    return a;
+  };
+  const x0 = i32(n);
+  const y0 = i32(n);
+  const x1 = i32(n);
+  const y1 = i32(n);
+  const name = i32(n);
+  const outStart = new Uint32Array(buf, o, n + 1);
+  o += (n + 1) * 4;
+  const len = new Float32Array(buf, o, n);
+  o += n * 4;
+  const target = i32(e);
+  const conLen = new Float32Array(buf, o, e);
+  o += e * 4;
+  const vmax = new Uint8Array(buf, o, n);
+  o += n;
+  const flags = new Uint8Array(buf, o, n);
+  o += n;
+  const layer = new Int8Array(buf, o, n);
+  o += n;
+  const turn = new Uint8Array(buf, o, e);
+  return { n, e, x0, y0, x1, y1, name, outStart, len, target, conLen, vmax, flags, layer, turn };
+}
+
+/** Adressen: a = flach [Straßenindex, x(dm), y(dm), Spur, s(dm)] je Adresse; nums parallel dazu */
+export interface AddressFile {
+  streets: string[];
+  nums: string[];
+  a: number[];
+}
+
+export interface Poi {
+  n: string; // Name
+  c: string; // Kategorie (food, shop, hotel, health, station, culture, school, emergency, office)
+  t: string; // OSM-Unterart
+  x: number; // dm
+  y: number;
+  l: number; // Spur
+  s: number; // dm auf der Spur
+}
+
+export interface PoiFile {
+  pois: Poi[];
 }

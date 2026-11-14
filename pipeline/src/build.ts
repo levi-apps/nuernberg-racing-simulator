@@ -13,6 +13,7 @@ import { buildControl } from './control.ts';
 import { buildMarkings, buildSurfaces } from './surfaces.ts';
 import { writeWorld } from './tiles.ts';
 import { validate } from './validate.ts';
+import { writeNav } from './nav.ts';
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), '../..');
 /** Ohne Argument: neueste .osm.pbf-Datei in data/raw */
@@ -63,4 +64,7 @@ step('Flächen');
 log('Kacheln schreiben …');
 writeWorld(outDir, ex, net, ctl, surfaces, markings, val.sccLanes, log);
 step('Kacheln');
+log('Navigation und Aufträge …');
+writeNav(outDir, ex, net, val.sccLanes, log);
+step('Navigation');
 console.log(`Fertig in ${((Date.now() - t0) / 1000).toFixed(1)} s`);

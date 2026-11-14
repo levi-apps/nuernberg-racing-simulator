@@ -40,6 +40,8 @@ export class DebugUi {
   private selected: Pick | null = null;
   /** Aufruf, wenn das Auto auf eine Spur gesetzt werden soll */
   onPlaceCar?: (lane: Lane) => void;
+  /** Navigation zu einer Spur starten */
+  onNavigate?: (lane: Lane) => void;
   /** Aufruf bei Auswahl eines Orts (im Fahrmodus: Auto dorthin) */
   onJump?: (x: number, y: number) => void;
   /** zusätzliche Auswahl (z. B. Fahrzeuge): liefert HTML für den Inspektor */
@@ -89,6 +91,7 @@ export class DebugUi {
     this.inspector.addEventListener('click', (e) => {
       const t = e.target as HTMLElement;
       if (t.dataset.action === 'place-car' && this.selected?.kind === 'lane') this.onPlaceCar?.(this.selected.lane);
+      if (t.dataset.action === 'navigate' && this.selected?.kind === 'lane') this.onNavigate?.(this.selected.lane);
     });
   }
 
@@ -194,7 +197,7 @@ export class DebugUi {
       if (l.iso) lines.push('<span style="color:#c00">außerhalb des Hauptnetzes</span>');
       if (l.stops?.length) lines.push(`Haltelinien: ${l.stops.map((s) => `${s.s} m (Anlage ${s.ctrl}, Gruppe ${s.grp})`).join(', ')}`);
       lines.push(`Ausfahrten: ${l.out.length ? l.out.map((c) => `${c} (${this.view.conById.get(c)?.turn ?? '?'})`).join(', ') : '–'}`);
-      lines.push('', '<a data-action="place-car">▶ Auto hier absetzen</a>');
+      lines.push('', '<a data-action="place-car">▶ Auto hier absetzen</a>', '<a data-action="navigate">⚑ Navigation hierher</a>');
       inspector.innerHTML = lines.join('\n');
     } else if (p.kind === 'connector') {
       const c = p.con;

@@ -43,6 +43,7 @@ export class CarMesh {
       mesh.position.set(x, y, 0);
       mesh.renderOrder = 20 + order;
       mesh.frustumCulled = false;
+      mesh.layers.set(1); // nur Hauptansicht
       this.group.add(mesh);
       return mesh;
     };
