@@ -2,7 +2,7 @@
 
 Mit dem Auto durch das echte Nürnberg fahren, mit dem echten Straßennetz und echten Gebäuden, Kreuzungen und Ampeln aus OpenStreetMap. Erst in 2D aus der Vogelperspektive, später in 3D.
 
-Stand: **Schritt 1 – Datenpipeline und Karten-Debugansicht.**
+Stand: **Schritt 2 – mit dem Auto durch die ganze Stadt fahren.** (Schritt 1: Datenpipeline und Karten-Debugansicht)
 
 ## Schnellstart
 
@@ -12,17 +12,41 @@ Voraussetzung: Node.js 20 oder neuer.
 npm install
 npm run data:download   # OSM-Auszug Mittelfranken laden (~100 MB, Geofabrik)
 npm run data:build      # Spielwelt erzeugen (~15 s), schreibt nach game/public/world/
-npm run dev             # Debugansicht unter http://localhost:5173
+npm run dev             # Spiel unter http://localhost:5173
 ```
 
 `data:build` nimmt die neueste `.osm.pbf`-Datei in `data/raw/`. Eine andere Datei geht so: `npm run data:build -- pfad/zur/datei.osm.pbf`.
 
-## Debugansicht
+## Fahren
+
+| Taste | Funktion |
+|---|---|
+| W / ↑ | Gas |
+| S / ↓ | Bremse, im Stand rückwärts |
+| A, D / ←, → | lenken |
+| Leertaste | Handbremse (driften) |
+| R | zurück auf die nächste Straße |
+| C | Kamera: Norden oben ↔ dreht mit dem Auto |
+| K | Karte / Debugansicht ein- und ausblenden |
+| H | Tastenhilfe ein/aus |
+| Mausrad | näher / weiter weg |
+
+Gamepads werden mit der Standardbelegung unterstützt: RT Gas, LT Bremse, linker Stick lenkt, A ist die Handbremse.
+
+- Die Karte startet am Hauptmarkt. Mit `#x,y` in der URL startest du an einer anderen Stelle (Meter, siehe Koordinaten).
+- Auf der Straße fährt das Auto am schnellsten. Im Gelände ist es langsamer und rutschiger, im Wasser kommt es kaum voran.
+- Gebäude sind fest. Unter Gebäuden hindurch kann man nur fahren, wenn dort eine Straße verläuft (Durchfahrten).
+- Auf Brücken und in Tunneln fährt das Auto auf einer eigenen Ebene und prallt nicht gegen darunter- oder darüberliegende Gebäude.
+- Unten im HUD stehen Straßenname und Tempolimit. Bei mehr als 5 km/h über dem Limit blinkt das Schild (noch ohne Folgen).
+- Kacheln werden beim Fahren um das Auto herum nachgeladen. Solange die Umgebung fehlt, steht die Physik kurz still.
+
+## Debugansicht (Taste K)
 
 - Ziehen verschiebt die Karte, das Mausrad zoomt. Die Position steht in der URL (`#x,y,m-pro-pixel`) und lässt sich teilen.
 - Beim Hineinzoomen erscheinen Fahrspuren mit Richtungspfeilen, Spurverbinder (nach Abbiegerichtung eingefärbt), die Regelung am Spurende (Stopp, Vorfahrt gewähren, Vorfahrtstraße, rechts vor links) und Ampeln. Die Ampeln schalten live.
 - Ein Klick auf eine Spur, einen Verbinder oder eine Ampel zeigt die Details. Bei einer Spur werden außerdem Nachfolger und Vorgänger hervorgehoben.
-- In der Browser-Konsole ist die Ansicht als `map` erreichbar.
+- „Auto hier absetzen“ im Auswahlfeld einer Spur setzt das Auto dorthin.
+- In der Browser-Konsole sind die Ansicht als `map` und der Fahrmodus als `drive` erreichbar.
 
 ## Aufbau
 
@@ -36,7 +60,10 @@ pipeline/   OSM -> Spielwelt
   src/surfaces.ts     Fahrbahnflächen und Markierungen
   src/validate.ts     Prüfung des Spurgraphen (Sackgassen, Zusammenhang)
   src/tiles.ts        Ausgabe als Kacheln
-game/       Browser-Client (Vite, Three.js), aktuell die Debugansicht
+game/       Browser-Client (Vite, Three.js)
+  src/world/          Darstellung der Welt, Kachel-Nachladen (für Fahren und Debug)
+  src/drive/          Auto (Physik, Kollision, Eingabe), Kamera, HUD
+  src/debug/          Debug-Oberfläche
 data/raw/   OSM-Rohdaten (nicht im Repo)
 ```
 
@@ -69,6 +96,8 @@ Objekte, die über Kachelgrenzen reichen, stehen in mehreren Kacheln mit derselb
 - Bei großen Knoten mit mehreren OSM-Kreuzungen (z. B. Plärrer) haben die inneren Verbindungen keine eigene Ampel, sondern „Vorfahrt gewähren“.
 - Etwa 5 % der Spuren liegen außerhalb des zusammenhängenden Hauptnetzes (Parkplätze, Stummel an der Stadtgrenze). Sie sind mit `iso: 1` markiert.
 - Die Fahrbahnbreite ergibt sich nur aus den Fahrspuren. Parkstreifen, Gehwege und Bordsteine fehlen noch.
+- Wer abseits der Straße unter eine Brücke fährt und dabei die Brückenfläche berührt, landet auf der Brücke.
+- Mauern, Zäune, Poller und Bäume sind noch keine Hindernisse, nur Gebäude.
 
 ## Lizenz der Kartendaten
 

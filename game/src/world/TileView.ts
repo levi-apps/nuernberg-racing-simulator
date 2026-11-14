@@ -6,6 +6,7 @@ import type { LaneControl, Tile } from '@nrs/shared';
 import { FillBuilder, LineBuilder, MarkerBuilder } from './geometry.ts';
 import {
   AREA_COLORS,
+  BUILDING_EDGE,
   BUILDING_FILL,
   CONTROL_COLORS,
   LANE_COLOR_BWD,
@@ -46,17 +47,19 @@ export const ORDER: Record<string, number> = {
   controls: 11,
   signals: 12,
   grid: 13,
+  car: 20,
 };
 
+// Alles läuft durch den transparenten Durchgang, damit allein renderOrder die Zeichenreihenfolge bestimmt
 const meshMat = (opacity = 1) =>
-  new THREE.MeshBasicMaterial({ vertexColors: true, depthTest: false, depthWrite: false, transparent: opacity < 1, opacity, side: THREE.DoubleSide });
+  new THREE.MeshBasicMaterial({ vertexColors: true, depthTest: false, depthWrite: false, transparent: true, opacity, side: THREE.DoubleSide });
 const lineMat = (opacity = 1) =>
-  new THREE.LineBasicMaterial({ vertexColors: true, depthTest: false, depthWrite: false, transparent: opacity < 1, opacity });
+  new THREE.LineBasicMaterial({ vertexColors: true, depthTest: false, depthWrite: false, transparent: true, opacity });
 
 export const MATERIALS = {
   fill: meshMat(),
   tunnel: meshMat(0.35),
-  building: meshMat(0.92),
+  building: meshMat(1),
   line: lineMat(),
   lineSoft: lineMat(0.55),
   marker: meshMat(),
@@ -133,8 +136,15 @@ export class TileView {
 
     // Gebäude
     const bld = new FillBuilder();
-    for (const b of t.buildings) bld.add(b.outer, b.holes, BUILDING_FILL);
+    const bldEdge = new LineBuilder();
+    for (const b of t.buildings) {
+      // höhere Gebäude etwas dunkler: einfacher Tiefeneindruck von oben
+      bld.add(b.outer, b.holes, shadeBuilding(b.h));
+      bldEdge.add([...b.outer, b.outer[0], b.outer[1]], BUILDING_EDGE);
+      for (const h of b.holes ?? []) bldEdge.add([...h, h[0], h[1]], BUILDING_EDGE);
+    }
     if (!bld.empty) this.addObj('buildings', new THREE.Mesh(bld.build(), MATERIALS.building), ORDER.buildings);
+    if (!bldEdge.empty) this.addObj('buildings', new THREE.LineSegments(bldEdge.build(), MATERIALS.line), ORDER.buildings);
 
     // Spuren mit Richtungspfeilen
     const lanes = new LineBuilder();
@@ -199,6 +209,13 @@ export class TileView {
       if ((o as THREE.Mesh).geometry) (o as THREE.Mesh).geometry.dispose();
     });
   }
+}
+
+const bTmp = new THREE.Color();
+const bBase = new THREE.Color(BUILDING_FILL);
+function shadeBuilding(h: number): number {
+  const f = 1 - Math.min(0.22, Math.max(0, (h - 6) / 120));
+  return bTmp.copy(bBase).multiplyScalar(f).getHex();
 }
 
 export function pointAlong(pts: number[], s: number): [number, number] {

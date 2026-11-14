@@ -110,3 +110,106 @@ body {
 #attribution a {
   color: inherit;
 }
+
+/* ---------- Fahrmodus ---------- */
+#drive-hud {
+  position: fixed;
+  inset: 0;
+  pointer-events: none;
+  font-family: system-ui, -apple-system, 'Segoe UI', sans-serif;
+}
+#drive-hud .dash {
+  position: absolute;
+  right: 22px;
+  bottom: 30px;
+  display: flex;
+  align-items: center;
+  gap: 14px;
+}
+#drive-hud .speed {
+  min-width: 132px;
+  padding: 6px 14px;
+  background: rgba(20, 22, 26, 0.82);
+  color: #fff;
+  border-radius: 12px;
+  font: 700 44px/1 ui-monospace, SFMono-Regular, Menlo, monospace;
+  text-align: right;
+}
+#drive-hud .speed small {
+  font: 600 13px/1 system-ui, sans-serif;
+  margin-left: 6px;
+  opacity: 0.7;
+}
+#drive-hud .limit {
+  width: 58px;
+  height: 58px;
+  border-radius: 50%;
+  background: #fff;
+  border: 7px solid #d2232a;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font: 700 21px/1 system-ui, sans-serif;
+  color: #111;
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.3);
+}
+#drive-hud .limit.over {
+  animation: blink 0.6s steps(2) infinite;
+}
+@keyframes blink {
+  50% {
+    background: #ffd84d;
+  }
+}
+#drive-hud .street {
+  position: absolute;
+  left: 50%;
+  bottom: 30px;
+  transform: translateX(-50%);
+  padding: 7px 16px;
+  background: rgba(20, 22, 26, 0.82);
+  color: #fff;
+  border-radius: 10px;
+  font-size: 18px;
+  font-weight: 600;
+  white-space: nowrap;
+}
+#drive-hud .msg {
+  position: absolute;
+  left: 50%;
+  top: 22%;
+  transform: translateX(-50%);
+  padding: 8px 18px;
+  background: rgba(20, 22, 26, 0.8);
+  color: #fff;
+  border-radius: 10px;
+  font-size: 20px;
+  font-weight: 700;
+  opacity: 0;
+  transition: opacity 0.3s;
+}
+#drive-hud .help {
+  position: absolute;
+  left: 16px;
+  bottom: 30px;
+  padding: 10px 14px;
+  background: rgba(255, 255, 255, 0.88);
+  border-radius: 10px;
+  font-size: 12.5px;
+  line-height: 1.6;
+  color: #222;
+}
+#drive-hud .help.hidden {
+  display: none;
+}
+#drive-hud .loading {
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  transform: translate(-50%, -50%);
+  padding: 10px 18px;
+  background: rgba(20, 22, 26, 0.8);
+  color: #fff;
+  border-radius: 10px;
+  font-size: 16px;
+}

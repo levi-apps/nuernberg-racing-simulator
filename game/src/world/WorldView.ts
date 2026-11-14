@@ -1,5 +1,6 @@
 /**
- * 2D-Kartenansicht (Vogelperspektive) mit Nachladen der Kacheln.
+ * Darstellung der Welt in der Vogelperspektive mit Nachladen der Kacheln.
+ * Wird vom Fahrmodus und von der Debug-Karte gemeinsam genutzt.
  */
 import * as THREE from 'three';
 import {
@@ -21,7 +22,7 @@ import { AREA_COLORS, BACKGROUND, ROAD_COLORS, SIGNAL_COLORS, TURN_COLORS } from
 
 /** Ab dieser Auflösung (m pro Pixel) werden Kacheln geladen, darüber nur die Übersicht. */
 const TILE_MPP = 2.6;
-const DETAIL_MPP = 0.7; // Spuren, Verbinder, Regelung
+export const DETAIL_MPP = 0.7; // Spuren, Verbinder, Regelung, Ampeln
 const MAX_TILES = 450;
 
 export type Pick =
@@ -29,17 +30,25 @@ export type Pick =
   | { kind: 'connector'; con: Connector }
   | { kind: 'signal'; head: SignalHead; ctrl: SignalController };
 
-export class MapView {
+export type ViewMode = 'map' | 'drive';
+
+export class WorldView {
   readonly renderer: THREE.WebGLRenderer;
   readonly scene = new THREE.Scene();
   readonly camera = new THREE.OrthographicCamera(-1, 1, 1, -1, -100, 100);
-  /** Kameramitte (m) und Maßstab (m pro CSS-Pixel) */
+  /** Kameramitte (m), Maßstab (m pro CSS-Pixel), Drehung: Weltrichtung von "oben" am Bildschirm (rad, PI/2 = Norden) */
   cx = 0;
   cy = 0;
   mpp = 1.5;
+  rot = Math.PI / 2;
+  mode: ViewMode = 'map';
+  /** Punkt, um den immer Kacheln geladen werden (Auto) */
+  anchor: [number, number] | null = null;
 
   manifest!: Manifest;
   controllers = new Map<number, SignalController>();
+  /** große Flächen (für Untergrund-Abfragen, z. B. Wasser) */
+  bigAreaData: Area[] = [];
   private tileSet = new Set<string>();
   private views = new Map<string, TileView>();
   private loading = new Set<string>();
@@ -63,7 +72,7 @@ export class MapView {
   private frame = 0;
   onChange?: () => void;
   startTime = performance.now();
-  /** Index geladener Spuren für Hervorhebung */
+  /** Index geladener Spuren und Verbinder */
   laneById = new Map<number, Lane>();
   conById = new Map<number, Connector>();
 
@@ -91,8 +100,8 @@ export class MapView {
     this.manifest = manifest;
     this.tileSet = new Set(manifest.tiles);
     for (const c of signals.controllers) this.controllers.set(c.id, c);
+    this.bigAreaData = areas.areas;
 
-    // große Flächen
     const fb = new FillBuilder();
     for (const a of areas.areas) fb.add(a.outer, a.holes, AREA_COLORS[a.k]);
     const am = new THREE.Mesh(fb.build(), MATERIALS.fill);
@@ -100,7 +109,6 @@ export class MapView {
     am.frustumCulled = false;
     this.bigAreas.add(am);
 
-    // Übersicht: Hauptstraßen + Stadtgrenze
     const lb = new LineBuilder();
     for (const r of overview.roads) lb.add(r.pts, ROAD_COLORS[r.cls] === 0xffffff ? 0x9a9a9a : darken(ROAD_COLORS[r.cls]));
     const ov = new THREE.LineSegments(lb.build(), MATERIALS.line);
@@ -117,16 +125,24 @@ export class MapView {
   private base = 'world';
 
   resize(): void {
-    const w = this.canvas.clientWidth;
-    const h = this.canvas.clientHeight;
-    this.renderer.setSize(w, h, false);
+    this.renderer.setSize(this.canvas.clientWidth, this.canvas.clientHeight, false);
+  }
+
+  /** Richtungen "rechts" und "oben" des Bildschirms in Weltkoordinaten */
+  private axes(): { ux: number; uy: number; rx: number; ry: number } {
+    const ux = Math.cos(this.rot);
+    const uy = Math.sin(this.rot);
+    return { ux, uy, rx: uy, ry: -ux };
   }
 
   /** Bildschirmpixel -> Weltkoordinaten (m) */
   toWorld(px: number, py: number): [number, number] {
     const w = this.canvas.clientWidth;
     const h = this.canvas.clientHeight;
-    return [this.cx + (px - w / 2) * this.mpp, this.cy - (py - h / 2) * this.mpp];
+    const dx = (px - w / 2) * this.mpp;
+    const dy = -(py - h / 2) * this.mpp;
+    const a = this.axes();
+    return [this.cx + a.rx * dx + a.ux * dy, this.cy + a.ry * dx + a.uy * dy];
   }
 
   zoomAt(px: number, py: number, factor: number): void {
@@ -139,8 +155,9 @@ export class MapView {
   }
 
   panBy(dxPx: number, dyPx: number): void {
-    this.cx -= dxPx * this.mpp;
-    this.cy += dyPx * this.mpp;
+    const a = this.axes();
+    this.cx -= (a.rx * dxPx - a.ux * dyPx) * this.mpp;
+    this.cy -= (a.ry * dxPx - a.uy * dyPx) * this.mpp;
     this.onChange?.();
   }
 
@@ -153,52 +170,92 @@ export class MapView {
   private applyLayers(v: TileView) {
     const detail = this.mpp < DETAIL_MPP;
     for (const [k, vis] of Object.entries(this.layerVisible) as Array<[LayerName, boolean]>) {
-      const needsDetail = k === 'lanes' || k === 'connectors' || k === 'controls' || k === 'signals';
-      v.setLayerVisible(k, vis && (!needsDetail || detail));
+      const debugOnly = k === 'lanes' || k === 'connectors' || k === 'controls' || k === 'grid';
+      const needsDetail = debugOnly || k === 'signals';
+      let show = vis && (!needsDetail || detail);
+      if (this.mode === 'drive' && debugOnly) show = false;
+      v.setLayerVisible(k, show);
     }
+  }
+
+  setMode(mode: ViewMode): void {
+    this.mode = mode;
+    for (const v of this.views.values()) this.applyLayers(v);
+    if (mode === 'drive') this.setHighlight(null);
   }
 
   get loadedTiles(): number {
     return this.views.size;
   }
 
-  private visibleTileRange(margin = 1) {
-    const w = this.canvas.clientWidth;
-    const h = this.canvas.clientHeight;
-    const [x0, y1] = this.toWorld(0, 0);
-    const [x1, y0] = this.toWorld(w, h);
-    return {
-      tx0: Math.floor(x0 / TILE_SIZE) - margin,
-      tx1: Math.floor(x1 / TILE_SIZE) + margin,
-      ty0: Math.floor(y0 / TILE_SIZE) - margin,
-      ty1: Math.floor(y1 / TILE_SIZE) + margin,
-    };
+  /** Geladene Kacheln im Umkreis (für Kollision und Untergrund) */
+  tilesAround(x: number, y: number, r: number): Tile[] {
+    const out: Tile[] = [];
+    const x0 = Math.floor((x - r) / TILE_SIZE);
+    const x1 = Math.floor((x + r) / TILE_SIZE);
+    const y0 = Math.floor((y - r) / TILE_SIZE);
+    const y1 = Math.floor((y + r) / TILE_SIZE);
+    for (let tx = x0; tx <= x1; tx++)
+      for (let ty = y0; ty <= y1; ty++) {
+        const v = this.views.get(tileKey(tx, ty));
+        if (v) out.push(v.tile);
+      }
+    return out;
+  }
+
+  /** true, wenn die Kachel an dieser Stelle geladen ist (oder es dort keine gibt) */
+  isReady(x: number, y: number): boolean {
+    const k = tileKey(Math.floor(x / TILE_SIZE), Math.floor(y / TILE_SIZE));
+    return !this.tileSet.has(k) || this.views.has(k);
   }
 
   private updateTiles(): void {
     const showTiles = this.mpp < TILE_MPP;
     this.overview.visible = !showTiles;
     for (const v of this.views.values()) v.group.visible = false;
-    if (!showTiles) return;
-    const r = this.visibleTileRange(1);
-    const want: string[] = [];
-    for (let tx = r.tx0; tx <= r.tx1; tx++)
-      for (let ty = r.ty0; ty <= r.ty1; ty++) {
-        const k = tileKey(tx, ty);
-        if (!this.tileSet.has(k)) continue;
-        want.push(k);
-        this.lastUsed.set(k, this.frame);
-        const v = this.views.get(k);
-        if (v) {
-          v.group.visible = true;
-          this.applyLayers(v);
-        } else if (!this.loading.has(k) && this.loading.size < 12) void this.load(k);
-      }
-    // Speicher begrenzen
+    const want = new Set<string>();
+    if (showTiles) {
+      // Kreis um die Bildmitte, der den gedrehten Bildschirm ganz abdeckt
+      const r = (Math.hypot(this.canvas.clientWidth, this.canvas.clientHeight) / 2) * this.mpp + TILE_SIZE * 0.5;
+      this.collect(this.cx, this.cy, r, want);
+    }
+    if (this.anchor) this.collect(this.anchor[0], this.anchor[1], TILE_SIZE * 0.75, want);
+    // nächstgelegene zuerst laden
+    const order = [...want].sort((a, b) => this.tileDist(a) - this.tileDist(b));
+    for (const k of order) {
+      this.lastUsed.set(k, this.frame);
+      const v = this.views.get(k);
+      if (v) {
+        v.group.visible = showTiles;
+        this.applyLayers(v);
+      } else if (!this.loading.has(k) && this.loading.size < 8) void this.load(k);
+    }
     if (this.views.size > MAX_TILES) {
-      const old = [...this.views.keys()].sort((a, b) => (this.lastUsed.get(a) ?? 0) - (this.lastUsed.get(b) ?? 0));
+      const old = [...this.views.keys()].filter((k) => !want.has(k)).sort((a, b) => (this.lastUsed.get(a) ?? 0) - (this.lastUsed.get(b) ?? 0));
       for (const k of old.slice(0, this.views.size - MAX_TILES)) this.unload(k);
     }
+  }
+
+  private tileDist(k: string): number {
+    const [tx, ty] = k.split('_').map(Number);
+    const px = this.anchor?.[0] ?? this.cx;
+    const py = this.anchor?.[1] ?? this.cy;
+    return Math.hypot((tx + 0.5) * TILE_SIZE - px, (ty + 0.5) * TILE_SIZE - py);
+  }
+
+  private collect(x: number, y: number, r: number, into: Set<string>) {
+    const x0 = Math.floor((x - r) / TILE_SIZE);
+    const x1 = Math.floor((x + r) / TILE_SIZE);
+    const y0 = Math.floor((y - r) / TILE_SIZE);
+    const y1 = Math.floor((y + r) / TILE_SIZE);
+    for (let tx = x0; tx <= x1; tx++)
+      for (let ty = y0; ty <= y1; ty++) {
+        const cx = (tx + 0.5) * TILE_SIZE;
+        const cy = (ty + 0.5) * TILE_SIZE;
+        if (Math.hypot(cx - x, cy - y) > r + TILE_SIZE * 0.71) continue;
+        const k = tileKey(tx, ty);
+        if (this.tileSet.has(k)) into.add(k);
+      }
   }
 
   private async load(k: string): Promise<void> {
@@ -211,6 +268,7 @@ export class MapView {
       this.scene.add(v.group);
       for (const l of tile.lanes) this.laneById.set(l.id, l);
       for (const c of tile.connectors) this.conById.set(c.id, c);
+      v.group.visible = false;
       this.applyLayers(v);
       this.onChange?.();
     } catch (e) {
@@ -239,10 +297,13 @@ export class MapView {
     const h = this.canvas.clientHeight;
     const hw = (w / 2) * this.mpp;
     const hh = (h / 2) * this.mpp;
-    this.camera.left = this.cx - hw;
-    this.camera.right = this.cx + hw;
-    this.camera.top = this.cy + hh;
-    this.camera.bottom = this.cy - hh;
+    this.camera.left = -hw;
+    this.camera.right = hw;
+    this.camera.top = hh;
+    this.camera.bottom = -hh;
+    this.camera.position.set(this.cx, this.cy, 50);
+    this.camera.up.set(Math.cos(this.rot), Math.sin(this.rot), 0);
+    this.camera.lookAt(this.cx, this.cy, 0);
     this.camera.updateProjectionMatrix();
     this.updateTiles();
     if (this.frame % 6 === 0) this.updateSignals();
@@ -261,6 +322,19 @@ export class MapView {
       }
       v.signalAttr.needsUpdate = true;
     }
+  }
+
+  /** Nächstgelegene Spur (für Straßenname, Absetzen des Autos) */
+  nearestLane(x: number, y: number, maxDist = 40, mainOnly = false): { lane: Lane; d: number; s: number } | null {
+    let best: { lane: Lane; d: number; s: number } | null = null;
+    for (const t of this.tilesAround(x, y, maxDist)) {
+      for (const l of t.lanes) {
+        if (mainOnly && l.iso) continue;
+        const r = projectOnPolyline(l.pts, x, y);
+        if (r.d < (best?.d ?? maxDist)) best = { lane: l, d: r.d, s: r.s };
+      }
+    }
+    return best;
   }
 
   /** Objekt unter dem Mauszeiger finden */
@@ -284,14 +358,14 @@ export class MapView {
       }
     }
     for (const c of v.tile.connectors) {
-      const d = distToPolyline(c.pts, x, y);
+      const d = projectOnPolyline(c.pts, x, y).d;
       if (d < bestD) {
         bestD = d;
         best = { kind: 'connector', con: c };
       }
     }
     for (const l of v.tile.lanes) {
-      const d = distToPolyline(l.pts, x, y);
+      const d = projectOnPolyline(l.pts, x, y).d;
       if (d < bestD) {
         bestD = d;
         best = { kind: 'lane', lane: l };
@@ -318,7 +392,6 @@ export class MapView {
         const nxt = this.laneById.get(c.to);
         if (nxt) ribbon(nxt.pts, 0.5, 0xff9fb5);
       }
-      // Vorgänger
       for (const c of this.conById.values()) {
         if (c.to !== p.lane.id) continue;
         const prev = this.laneById.get(c.from);
@@ -332,12 +405,11 @@ export class MapView {
       if (a) ribbon(a.pts, 0.5, 0x9fb5ff);
       if (b) ribbon(b.pts, 0.5, 0xff9fb5);
     } else {
-      // alle Signalköpfe derselben Anlage
       for (const v of this.views.values())
         for (const h of v.tile.signals)
           if (h.ctrl === p.head.ctrl) {
-            const r = 2.2;
-            fb.add([dmv(h.x - r * 10), dmv(h.y - r * 10), dmv(h.x + r * 10), dmv(h.y - r * 10), dmv(h.x + r * 10), dmv(h.y + r * 10), dmv(h.x - r * 10), dmv(h.y + r * 10)], undefined, h.grp === 0 ? 0x2b6fd6 : 0xe08a20);
+            const r = 22;
+            fb.add([h.x - r, h.y - r, h.x + r, h.y - r, h.x + r, h.y + r, h.x - r, h.y + r], undefined, h.grp === 0 ? 0x2b6fd6 : 0xe08a20);
           }
     }
     if (fb.empty) return;
@@ -355,16 +427,18 @@ export class MapView {
   }
 }
 
-const dmv = (v: number) => Math.round(v);
-
 function darken(c: number): number {
   const col = new THREE.Color(c);
   col.multiplyScalar(0.75);
   return col.getHex();
 }
 
-function distToPolyline(pts: number[], x: number, y: number): number {
+/** Abstand eines Punkts zu einer Polylinie (dm-Koordinaten) und Bogenlänge des Lotfußpunkts in m */
+export function projectOnPolyline(pts: number[], x: number, y: number): { d: number; s: number; dir: [number, number] } {
   let best = Infinity;
+  let bestS = 0;
+  let acc = 0;
+  let dir: [number, number] = [1, 0];
   for (let i = 2; i < pts.length; i += 2) {
     const ax = pts[i - 2] / 10;
     const ay = pts[i - 1] / 10;
@@ -373,11 +447,17 @@ function distToPolyline(pts: number[], x: number, y: number): number {
     const dx = bx - ax;
     const dy = by - ay;
     const l2 = dx * dx + dy * dy;
+    const l = Math.sqrt(l2);
     const t = l2 > 0 ? Math.max(0, Math.min(1, ((x - ax) * dx + (y - ay) * dy) / l2)) : 0;
     const d = Math.hypot(ax + dx * t - x, ay + dy * t - y);
-    if (d < best) best = d;
+    if (d < best) {
+      best = d;
+      bestS = acc + t * l;
+      if (l > 0) dir = [dx / l, dy / l];
+    }
+    acc += l;
   }
-  return best;
+  return { d: best, s: bestS, dir };
 }
 
 /** Band um eine Polylinie als Polygon (dm) */
